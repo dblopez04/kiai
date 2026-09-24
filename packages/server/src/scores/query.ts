@@ -165,9 +165,12 @@ export function searchWords(q: string): string[] {
   return q.replace(/[^\p{L}\p{N}\s-]/gu, " ").split(/\s+/).filter(Boolean);
 }
 
-/** WHERE conditions over `scores s join beatmaps b`. */
-export function scoreConditions(sql: Sql, userId: number, f: ScoreFilters): PendingQuery<Row[]> {
-  const c: PendingQuery<Row[]>[] = [sql`s.user_id = ${userId}`];
+/**
+ * WHERE conditions over `scores s join beatmaps b`, or any source with the same columns (the
+ * tournament scores in `match_score_rows`). A null `userId` matches every player.
+ */
+export function scoreConditions(sql: Sql, userId: number | null, f: ScoreFilters): PendingQuery<Row[]> {
+  const c: PendingQuery<Row[]>[] = [userId === null ? sql`true` : sql`s.user_id = ${userId}`];
   if (f.beatmapId !== null) c.push(sql`s.beatmap_id = ${f.beatmapId}`);
   if (f.modeInt !== null) c.push(sql`s.ruleset_id = ${f.modeInt}`);
   if (f.status.length) c.push(sql`b.status = any(${f.status}::text[])`);
@@ -280,14 +283,20 @@ const iso = (value: unknown): string | null => {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
-export function toScoreView(row: Row): ScoreView {
-  const b = (row.beatmap ?? {}) as Record<string, unknown>;
+/** A `beatmaps` row (as JSON) with links and cover images. */
+export function toBeatmapView(value: unknown): BeatmapView {
+  const b = (value ?? {}) as Record<string, unknown>;
   const setId = Number(b.beatmapset_id ?? 0);
   const beatmap = { ...b } as unknown as BeatmapView;
   beatmap.last_updated = iso(b.last_updated);
   beatmap.url = `https://osu.ppy.sh/beatmapsets/${setId}#osu/${String(b.id)}`;
   beatmap.cover_url = `https://assets.ppy.sh/beatmaps/${setId}/covers/cover.jpg`;
   beatmap.list_url = `https://assets.ppy.sh/beatmaps/${setId}/covers/list@2x.jpg`;
+  return beatmap;
+}
+
+export function toScoreView(row: Row): ScoreView {
+  const beatmap = toBeatmapView(row.beatmap);
   return {
     id: row.id,
     user_id: row.user_id,

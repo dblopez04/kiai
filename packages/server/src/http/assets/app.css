@@ -15,6 +15,10 @@
   --b: #2f6fd6;
   --c: #8a4fd0;
   --d: #c23b3b;
+  --red: #d23a3a;
+  --blue: #2f6fd6;
+  --win: #1f8a4c;
+  --me: #fdf0f6;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -33,6 +37,10 @@
     --b: #7fb0ff;
     --c: #c79bff;
     --d: #ff8a8a;
+    --red: #ff7b7b;
+    --blue: #7fb0ff;
+    --win: #6ee39a;
+    --me: #2c1f2a;
   }
 }
 
@@ -132,6 +140,30 @@ table.kv td { padding: 0.25rem 0; }
 .cover { background-size: cover; background-position: center; padding: 0; overflow: hidden; }
 .coverinner { display: flex; gap: 1.2rem; align-items: center; padding: 1.5rem; background: linear-gradient(90deg, color-mix(in srgb, var(--card) 95%, transparent), color-mix(in srgb, var(--card) 70%, transparent)); }
 .coverinner p { margin: 0.3rem 0 0; }
+
+.topbar nav.sections { gap: 1.2rem; flex-wrap: wrap; }
+.topbar nav.sections a:not(.brand) { color: var(--muted); text-decoration: none; }
+.topbar nav.sections a:not(.brand):hover { color: var(--accent); }
+textarea { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 0.5rem; width: 100%; resize: vertical; }
+input.wide { width: 100%; min-width: 12rem; }
+label.grow { display: grid; gap: 0.2rem; }
+.chip { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 0 0.5rem; font-size: 0.8em; white-space: nowrap; }
+.chip.win { background: var(--win); border-color: var(--win); color: var(--accent-text); font-weight: 700; }
+.chip.loss { background: var(--alert); border-color: var(--alert); color: var(--accent-text); font-weight: 700; }
+.chip.side-red { border-color: var(--red); color: var(--red); }
+.chip.side-blue { border-color: var(--blue); color: var(--blue); }
+.side-red { color: var(--red); }
+.side-blue { color: var(--blue); }
+.scoreline { font-size: 1.3rem; margin: 0.2rem 0 0.6rem; }
+tr.me td { background: var(--me); }
+table.scores.compact th, table.scores.compact td { padding: 0.25rem 0.5rem; }
+tr.row-red td:first-child { box-shadow: inset 3px 0 0 var(--red); }
+tr.row-blue td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
+.game { display: grid; gap: 0.6rem; }
+.gamehead { display: flex; gap: 0.8rem; align-items: center; }
+.gamehead img { border-radius: 6px; object-fit: cover; }
+.discovery { border-top: 1px solid var(--line); padding-top: 0.6rem; margin-top: 0.6rem; }
+.discovery p { margin: 0.3rem 0; }
 
 @media (max-width: 640px) {
   main { padding: 0.6rem; }

@@ -32,6 +32,8 @@ const envSchema = z.object({
   LOCAL_PP: flag.default(true),
   /** After each sync, recalculate locally any score stored with exactly 0 PP. */
   BACKFILL_ZERO_PP_ON_SYNC: flag.default(false),
+  /** Crawl osu!'s lobby and ranked play lists for new matches the player played in. */
+  MATCH_DISCOVERY: flag.default(true),
 });
 
 export type Config = z.infer<typeof envSchema>;
