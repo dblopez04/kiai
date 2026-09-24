@@ -270,7 +270,19 @@ function headline(m: MatchDetail): Html | string {
   };
   const [a, b] = winnerFirst(m.red_wins, m.blue_wins);
   const wins = { red: m.red_wins, blue: m.blue_wins };
-  return html`<p class="scoreline"><span class="side-${a}">${names(a)}</span> <strong>${wins[a]} – ${wins[b]}</strong> <span class="side-${b}">${names(b)}</span></p>`;
+  const leader = wins[a] > wins[b] ? "leader" : "";
+  return html`<p class="scoreline"><span class="side-${a} ${leader}">${names(a)}</span> <strong class="wins">${wins[a]} – ${wins[b]}</strong> <span class="side-${b}">${names(b)}</span></p>`;
+}
+
+const SEARCH_ICON = html`<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>`;
+
+/** A player's name linking to their osu! profile, then a search icon for your other matches with or against them. */
+function playerLinks(p: { user_id: number; username: string | null; side: string | null }, m: MatchDetail, playerId: number): Html {
+  const filter = p.side && p.side === m.me?.side ? "with" : "vs";
+  const label = `Other matches ${filter === "with" ? "with" : "against"} ${who(p)}`;
+  return html`<a href="${profile(p.user_id)}" target="_blank" rel="noopener noreferrer">${who(p)}</a>${
+    p.user_id === playerId ? "" : html` <a class="icon-link" href="/matches?${filter}=${p.user_id}" title="${label}" aria-label="${label}">${SEARCH_ICON}</a>`
+  }`;
 }
 
 function playersTable(m: MatchDetail, playerId: number): Html {
@@ -284,8 +296,7 @@ function playersTable(m: MatchDetail, playerId: number): Html {
           <thead><tr><th>Player</th><th>Side</th><th class="r">Maps</th><th class="r">Avg score</th><th class="r">Avg acc</th><th class="r">Match cost</th></tr></thead>
           <tbody>${m.players.map(
             (p) => html`<tr class="${p.user_id === playerId ? "me" : ""}">
-              <td><a href="${profile(p.user_id)}" target="_blank" rel="noopener noreferrer">${who(p)}</a>${p.country_code ? html` <span class="muted small">${p.country_code}</span>` : ""}
-                ${p.user_id === playerId ? "" : html` <a class="small" href="/matches?${p.side && p.side === m.me?.side ? "with" : "vs"}=${p.user_id}" title="Other matches with this player">matches</a>`}</td>
+              <td>${playerLinks(p, m, playerId)}${p.country_code ? html` <span class="muted small">${p.country_code}</span>` : ""}</td>
               <td>${sideChip(p.side)}</td>
               <td class="r">${p.games_played}</td>
               <td class="r">${fmt.number(Math.round(p.avg_score))}</td>
@@ -294,7 +305,7 @@ function playersTable(m: MatchDetail, playerId: number): Html {
             </tr>`,
           )}</tbody>
         </table></div>`}
-    <p class="muted small">Bathbot's formula: each map's score over that map's average, averaged, plus 0.5; × up to 1.5 for playing every map; × 1.02 per mod combination beyond two; plus up to 0.5 for the tiebreaker${m.tiebreaker ? " (this match went to one)" : ""}. Zero scores are left out. Hover a cost for its parts.</p>
+    <p class="muted small">Bathbot's formula: each map's score over that map's average, averaged, plus 0.5; × up to 1.5 for playing every map; × 1.02 per mod combination beyond two; plus up to 0.5 for the tiebreaker${m.tiebreaker ? " (this match went to one)" : ""}. Zero scores are left out${m.ez_multiplier !== 1 ? `, and EZ scores count ×${m.ez_multiplier}` : ""}. Hover a cost for its parts.</p>
     <details>
       <summary>Warmups and settings</summary>
       <form method="post" action="/matches/${m.id}/settings" class="row wrap">
@@ -310,7 +321,13 @@ function playersTable(m: MatchDetail, playerId: number): Html {
 function mapTotals(red: number, blue: number): Html {
   const [a, b] = winnerFirst(red, blue);
   const totals = { red, blue };
-  return html`<span class="muted small"><span class="side-${a}">${fmt.number(totals[a])}</span> – <span class="side-${b}">${fmt.number(totals[b])}</span></span>`;
+  return html`<span class="maptotals"><span class="side-${a}">${fmt.number(totals[a])}</span> – <span class="side-${b}">${fmt.number(totals[b])}</span></span>`;
+}
+
+/** The player's score as the match counts it, noting the EZ multiplier when it applies. */
+function scoreCell(s: MatchGameView["scores"][number], ezMultiplier: number): Html {
+  if (s.score === s.total_score) return html`<td class="r">${fmt.number(s.score)}</td>`;
+  return html`<td class="r" title="${fmt.number(s.total_score)} on osu!, × ${ezMultiplier} for EZ">${fmt.number(s.score)} <span class="muted small">×${ezMultiplier}</span></td>`;
 }
 
 function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
@@ -320,7 +337,7 @@ function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
     : !g.counted
       ? html`<span class="chip">not counted</span>`
       : g.winner
-        ? html`<span class="chip side-${g.winner}">${g.winner} wins</span>`
+        ? html`<span class="chip result side-${g.winner}">${g.winner} wins</span>`
         : "";
   const totals =
     g.red_score !== null && g.blue_score !== null && m.format !== "ffa"
@@ -331,16 +348,17 @@ function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
       ${b ? html`<img src="${b.list_url}" alt="" loading="lazy" width="80" height="60">` : ""}
       <div class="grow">
         <div><span class="muted">#${g.position}</span> ${b ? html`<a href="${b.url}" target="_blank" rel="noopener noreferrer">${beatmapTitle(b, g.beatmap_id)}</a> <span class="muted">[${b.version ?? "?"}]</span>` : beatmapTitle(null, g.beatmap_id)}</div>
-        <div class="row wrap small">${b ? fmt.stars(b.difficulty_rating) : ""} ${g.mods.length ? modChips(g.mods.map((acronym) => ({ acronym }))) : ""} <span class="muted">${g.scoring_type ?? ""} ${g.team_type ?? ""}</span> ${status} ${totals}</div>
+        <div class="row wrap small">${b ? fmt.stars(b.difficulty_rating) : ""} ${g.mods.length ? modChips(g.mods.map((acronym) => ({ acronym }))) : ""} <span class="muted">${g.scoring_type ?? ""} ${g.team_type ?? ""}</span></div>
       </div>
+      ${status || totals ? html`<div class="mapresult">${status}${totals}</div>` : ""}
     </div>
     ${g.scores.length
       ? html`<div class="tablewrap"><table class="scores compact">
           <thead><tr><th>Player</th><th class="r">Score</th><th class="r">Acc</th><th class="r">Combo</th><th class="r">Miss</th><th>Rank</th><th>Mods</th><th class="r">PP</th></tr></thead>
           <tbody>${g.scores.map(
             (s) => html`<tr class="${[s.user_id === playerId ? "me" : "", s.side ? `row-${s.side}` : ""].join(" ")}">
-              <td>${sideChip(s.side)} ${who(s)}${s.passed ? "" : html` <span class="muted small">failed</span>`}</td>
-              <td class="r">${fmt.number(s.total_score)}</td>
+              <td>${sideChip(s.side)} ${playerLinks(s, m, playerId)}${s.passed ? "" : html` <span class="muted small">failed</span>`}</td>
+              ${scoreCell(s, m.ez_multiplier)}
               <td class="r">${fmt.acc(s.accuracy)}</td>
               <td class="r">${fmt.number(s.max_combo)}${b?.max_combo ? html`<span class="muted">/${fmt.number(b.max_combo)}</span>` : ""}</td>
               <td class="r">${fmt.number(s.countmiss)}</td>
