@@ -11,7 +11,7 @@ Tools for osu! players on Linux who run a homelab.
 | Replay watcher (systemd user service), Discord DM or webhook with the link | **done** (client + server) |
 | Render presets chosen by rules on the replay (mods, AR, server, ...), skin uploads, editor | **done** (server + client) |
 | Public replay pages with inline Discord video (Caddy + Cloudflare Tunnel) | **done** (server) |
-| Public gallery with the score library's filters | planned: phase 6 |
+| Public gallery with the score library's filters | **done** (server) |
 | Map skillset checker | later, once it settles in its own repo |
 
 See [docs/architecture.md](docs/architecture.md) for the full design and roadmap.
@@ -267,8 +267,23 @@ where you can watch or download them and render again, with the rules or a prese
 Replay pages are the only public part. They're a separate app (`server public`, the `public`
 service) on its own port, 8081, with no route into the score library. It shows only replays
 that have a finished render: `/r/<id>` (video, map, mods, accuracy, pp), `/r/<id>/video.mp4` (with
-byte ranges), and a list of recent renders at `/`. The pages carry `og:video` tags, so a link
-posted in Discord plays inline.
+byte ranges), and the gallery at `/`. The pages carry `og:video` tags, so a link posted in
+Discord plays inline.
+
+The gallery searches rendered replays with the score library's filters (the same form and URL
+parameters as `/api/scores`), from every player whose replay you rendered:
+
+- It shows a replay while its latest render has succeeded, like `/r/<id>`. A replay being
+  rendered again drops out until that render finishes.
+- **Date** is when the play was set. **PP** is osu!'s when the replay is linked to a play in the
+  score library, otherwise rosu-pp's estimate (marked `*`), the same number the replay page shows.
+- **Stars** and **map status** are osu!'s beatmap values without mods, as in the score library.
+  Maps osu! doesn't know (unsubmitted or edited) never match those two filters. Title search
+  still finds them through the `.osu` file's metadata.
+- **Best score per map** keeps the highest-pp replay of each map.
+
+The gallery only reads replays. The score library's other plays never appear, and the page
+runs only the mod filter buttons' script (`script-src 'self'`).
 
 To put it online through Cloudflare Tunnel:
 
