@@ -182,8 +182,8 @@ match has every map played and every player's score.
   `<matchcosts`. Each map's score is divided by that map's average and the results are
   averaged, plus 0.5. That is multiplied by up to 1.5 for playing every map and by 1.02 for each
   mod combination beyond two (NoFail doesn't count). A tiebreaker adds up to 0.5. Zero scores
-  are left out. Each match page can set warmups, maps to skip at the end, and an EZ multiplier;
-  changing them recalculates the match.
+  are left out. EZ scores count ×1.8. Each match page can set warmups, maps to skip at the end,
+  and the EZ multiplier; changing them recalculates the match.
 - **Searching matches:** by name, teammates (**With**: players on your side), opponents
   (**Against**), result, source, match cost, maps played and date. Sort by date, match cost,
   maps, average score, accuracy or name. In a 1v1 the other player is your opponent. In a

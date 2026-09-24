@@ -235,6 +235,12 @@ export async function recomputeMatch(sql: Db, matchId: number): Promise<void> {
   }
 }
 
+/** Recompute every match with an EZ score, after the EZ multiplier changed under it. */
+export async function recomputeEzMatches(sql: Db): Promise<void> {
+  const rows = await sql<{ match_id: number }[]>`select distinct match_id from match_scores where 'EZ' = any(mod_acronyms) order by match_id`;
+  for (const { match_id } of rows) await recomputeMatch(sql, match_id);
+}
+
 export interface MatchSettings {
   warmups: number;
   skipLast: number;
