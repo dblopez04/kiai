@@ -35,7 +35,8 @@ const MIGRATIONS_DIR = new URL("./migrations/", import.meta.url);
 // Arbitrary constant: serializes concurrent `migrate` runs (web and worker starting together).
 const MIGRATION_LOCK = 7_301_442;
 
-// Code to run after a migration's SQL, in the same transaction, for data SQL can't work out.
+// Code to run after a migration's SQL, in the same transaction, for data SQL can't work out. Hooks
+// call today's code, which expects today's schema, so they run once every pending SQL file has.
 const MIGRATION_HOOKS: Record<string, (tx: Db) => Promise<void>> = {
   "009_ez_multiplier_default.sql": async (tx) => (await import("../matches/store.ts")).recomputeEzMatches(tx),
   "010_match_game_results.sql": async (tx) => (await import("../matches/store.ts")).recomputeAllMatches(tx),
@@ -55,10 +56,10 @@ export async function migrate(sql: Sql): Promise<string[]> {
     for (const file of files) {
       if (applied.has(file)) continue;
       await tx.unsafe(await fs.readFile(new URL(file, MIGRATIONS_DIR), "utf8"));
-      await MIGRATION_HOOKS[file]?.(tx);
       await tx`insert into schema_migrations (name) values (${file})`;
       ran.push(file);
     }
+    for (const file of ran) await MIGRATION_HOOKS[file]?.(tx);
     return ran;
   });
 }

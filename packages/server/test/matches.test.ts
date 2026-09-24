@@ -231,6 +231,19 @@ describe("saving matches", () => {
       expect(match!.ez_multiplier).toBe(1.8);
       expect(await myAvgScore(id)).toBe(900_000);
     });
+
+    it("recomputes after every pending migration, so older hooks see today's schema", async () => {
+      const id = await save(ezMatch(90006));
+      await updateMatchSettings(db.sql, id, { warmups: 0, skipLast: 0, ezMultiplier: 1 });
+
+      // A database from before 009 and 010: 009's hook recomputes with code that writes 010's columns.
+      await db.sql`alter table match_games drop column counted, drop column winner, drop column red_score, drop column blue_score`;
+      await db.sql`delete from schema_migrations where name in ('009_ez_multiplier_default.sql', '010_match_game_results.sql')`;
+      expect(await migrate(db.sql)).toEqual(["009_ez_multiplier_default.sql", "010_match_game_results.sql"]);
+      expect(await myAvgScore(id)).toBe(900_000);
+      const [game] = await db.sql`select counted, winner from match_games where match_id = ${id}`;
+      expect(game).toMatchObject({ counted: true, winner: "red" });
+    });
   });
 
   it("saves lazer ranked play rooms as 1v1s, keeping osu!'s PP", async () => {
