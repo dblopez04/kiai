@@ -190,7 +190,17 @@ label.grow { display: grid; gap: 0.2rem; }
 .chip.side-blue { border-color: var(--blue); color: var(--blue); }
 .side-red { color: var(--red); }
 .side-blue { color: var(--blue); }
-.scoreline { font-size: 1.3rem; margin: 0.2rem 0 0.6rem; }
+.scoreline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.9rem; font-size: 1.6rem; margin: 0.4rem 0 0.8rem; }
+.scoreline .leader { font-weight: 700; }
+.scoreline .wins { font-size: 2.6rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.mapresult { display: grid; justify-items: end; gap: 0.3rem; text-align: right; }
+.maptotals { font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chip.result { font-size: 0.95rem; font-weight: 700; padding: 0.1rem 0.7rem; color: var(--card); }
+.chip.result.side-red { background: var(--red); }
+.chip.result.side-blue { background: var(--blue); }
+.icon-link { color: var(--muted); text-decoration: none; }
+.icon-link:hover { color: var(--accent); }
+svg.icon { width: 0.9em; height: 0.9em; vertical-align: -0.1em; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 tr.me td { background: var(--me); }
 table.scores.compact th, table.scores.compact td { padding: 0.25rem 0.5rem; }
 tr.row-red td:first-child { box-shadow: inset 3px 0 0 var(--red); }
@@ -228,4 +238,8 @@ svg.bars .baseline { stroke: var(--line); stroke-width: 1; vector-effect: non-sc
 @media (max-width: 640px) {
   main { padding: 0.6rem; }
   .coverinner { flex-direction: column; align-items: flex-start; }
+  .gamehead { flex-wrap: wrap; }
+  .mapresult { justify-items: start; text-align: left; }
+  .scoreline { font-size: 1.25rem; }
+  .scoreline .wins { font-size: 2rem; }
 }
