@@ -155,9 +155,8 @@ What the code relies on from danser 0.11's source:
    presets start as a copy of `default` (or of the preset whose Copy link was used).
 6. Notify. Discord DMs need a bot that shares a server with the user, since webhooks can't
    send DMs. The message is plain text: Discord doesn't unfurl links in a message that carries
-   its own embed. Videos up to `DISCORD_ATTACH_MAX_MB` are uploaded with it and play as they
-   are. Bigger ones are linked, and the replay page's `og:video` and `twitter:card=player` tags
-   make Discord play them inline. A webhook to a private channel is the no-setup alternative.
+   its own embed. Videos are never uploaded to Discord: the message links the replay page, whose
+   `og:video` and `twitter:card=player` tags make Discord play the video inline. A webhook to a private channel is the no-setup alternative.
 
 ## Deployment facts
 

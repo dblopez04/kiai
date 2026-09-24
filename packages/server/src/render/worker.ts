@@ -123,7 +123,7 @@ export async function runNextRender(deps: RenderDeps, signal?: AbortSignal): Pro
       lease_token: null,
     });
     log(`done: ${path.relative(paths.root, video)} (${(size / 1024 / 1024).toFixed(1)} MB)`);
-    await notify(deps, job.id, job.replay_id, (n, view) => n.rendered(view, { file: video, bytes: size }), log);
+    await notify(deps, job.id, job.replay_id, (n, view) => n.rendered(view), log);
   } catch (error) {
     const message = errorMessage(error);
     if (lease.lost) {

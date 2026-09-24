@@ -241,7 +241,6 @@ async function dispatch(command: string, args: string[], rt: Runtime, io: Io): P
         userId: config.DISCORD_USER_ID,
         webhookUrl: config.DISCORD_WEBHOOK_URL,
         publicUrl: config.PUBLIC_URL,
-        attachMaxBytes: config.DISCORD_ATTACH_MAX_MB * 1024 * 1024,
       });
       rt.log(notifier ? `Discord notifications on (${config.DISCORD_BOT_TOKEN && config.DISCORD_USER_ID ? "DM" : "webhook"})` : "Discord notifications off");
       await runRenderWorker(
