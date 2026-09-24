@@ -15,7 +15,7 @@ import {
   type BeatmapView,
   type ScoreFilters,
 } from "../scores/query.ts";
-import type { Side } from "./cost.ts";
+import { ezAdjusted, type Side } from "./cost.ts";
 import {
   MATCH_KINDS,
   MATCHMAKING_BOTS,
@@ -402,7 +402,10 @@ export interface MatchScoreView {
   team: string;
   side: Side | null;
   slot: number | null;
+  /** The score as osu! recorded it. */
   total_score: number;
+  /** The score as the match counts it, with the EZ multiplier applied. */
+  score: number;
   accuracy: number;
   max_combo: number;
   perfect: boolean;
@@ -469,7 +472,7 @@ export async function getMatchDetail(sql: Sql, playerId: number, matchId: number
     sql`select g.*, to_jsonb(b) as beatmap from match_games g left join beatmaps b on b.id = g.beatmap_id
       where g.match_id = ${matchId} order by g.position`,
     sql`select s.*, u.username from match_scores s left join osu_users u on u.id = s.user_id
-      where s.match_id = ${matchId} order by s.game_id, s.team = 'blue', s.total_score desc`,
+      where s.match_id = ${matchId} order by s.game_id`,
     analyzeSavedMatch(sql, matchId),
   ]);
   const sides = new Map(players.map((p) => [p.user_id, p.side]));
@@ -487,29 +490,34 @@ export async function getMatchDetail(sql: Sql, playerId: number, matchId: number
     players: winnerFirst(players, (p) => p.side, winningSide(item.red_wins, item.blue_wins)),
     games: games.map((g) => {
       const result = results.get(g.id);
-      const gameScores = scores
+      const gameScores: MatchScoreView[] = scores
         .filter((s) => s.game_id === g.id)
-        .map((s) => ({
-          id: s.id,
-          user_id: s.user_id,
-          username: s.username,
-          team: s.team,
-          side: sides.get(s.user_id) ?? null,
-          slot: s.slot,
-          total_score: s.total_score,
-          accuracy: s.accuracy,
-          max_combo: s.max_combo,
-          perfect: s.perfect,
-          passed: s.passed,
-          rank: s.rank,
-          count300: s.count300,
-          count100: s.count100,
-          count50: s.count50,
-          countmiss: s.countmiss,
-          mods: normalizeMods(s.mods),
-          pp: s.pp,
-          pp_source: s.pp_source,
-        }));
+        .map((s) => {
+          const mods = normalizeMods(s.mods);
+          return {
+            id: s.id,
+            user_id: s.user_id,
+            username: s.username,
+            team: s.team,
+            side: sides.get(s.user_id) ?? null,
+            slot: s.slot,
+            total_score: s.total_score,
+            score: ezAdjusted(s.total_score, mods.map((mod) => mod.acronym), row.ez_multiplier),
+            accuracy: s.accuracy,
+            max_combo: s.max_combo,
+            perfect: s.perfect,
+            passed: s.passed,
+            rank: s.rank,
+            count300: s.count300,
+            count100: s.count100,
+            count50: s.count50,
+            countmiss: s.countmiss,
+            mods,
+            pp: s.pp,
+            pp_source: s.pp_source,
+          };
+        })
+        .sort((a, b) => Number(a.team === "blue") - Number(b.team === "blue") || b.score - a.score);
       return {
         id: g.id,
         position: g.position,

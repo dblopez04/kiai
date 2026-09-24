@@ -85,11 +85,16 @@ export interface MatchAnalysis {
 
 const TEAM_TYPES = new Set(["team-vs", "tag-team-vs", "team_versus"]);
 
+/** A score as the match counts it: multiplied when set with EZ. */
+export function ezAdjusted(score: number, mods: readonly string[], ezMultiplier: number): number {
+  return ezMultiplier !== 1 && mods.includes("EZ") ? Math.trunc(score * ezMultiplier) : score;
+}
+
 /** Scores as Bathbot counts them: zero scores dropped, EZ scores multiplied. */
 function countedScores(game: CostGame, ezMultiplier: number): CostScore[] {
   return game.scores
     .filter((s) => s.score > 0)
-    .map((s) => (ezMultiplier !== 1 && s.mods.includes("EZ") ? { ...s, score: Math.trunc(s.score * ezMultiplier) } : s));
+    .map((s) => ({ ...s, score: ezAdjusted(s.score, s.mods, ezMultiplier) }));
 }
 
 function winnerOf(totals: Map<string, number>): string | null {
