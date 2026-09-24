@@ -351,7 +351,7 @@ export function matchPage(m: MatchDetail, player: Player, notice?: string): Html
       </div>
       ${headline(m)}
       <p class="muted">
-        ${m.kind === "ranked" ? "Lazer ranked play" : m.kind === "tournament" ? `Tournament ${m.acronym}` : m.kind === "other" ? "Stable multiplayer" : `${KIND_LABEL[m.kind]} matchmaking`} ·
+        ${m.kind === "ranked" ? "Lazer ranked play" : m.kind === "tournament" ? `Tournament ${m.acronym}` : m.kind === "other" ? `Stable multiplayer${m.not_tournament ? " (not a tournament)" : ""}` : `${KIND_LABEL[m.kind]} matchmaking`} ·
         ${fmt.dateTime(m.start_time)}${duration !== null ? ` · ${duration} min` : ""}${m.end_time ? "" : " · in progress"} ·
         ${m.games_count} maps · <a href="${m.url}" target="_blank" rel="noopener noreferrer">View on osu! ↗</a>
       </p>
@@ -359,6 +359,14 @@ export function matchPage(m: MatchDetail, player: Player, notice?: string): Html
         <span class="muted">Fetched ${fmt.dateTime(m.fetched_at)} (${m.added_via})</span>
         <button>Fetch again</button>
       </form>
+      ${m.kind === "tournament" || (m.kind === "other" && m.not_tournament)
+        ? html`<form method="post" action="/matches/${m.id}/tournament" class="row wrap small">
+            <input type="hidden" name="not_tournament" value="${m.not_tournament ? "false" : "true"}">
+            ${m.not_tournament
+              ? html`<span class="muted">Left out of tournaments and the tournament count.</span><button>Count as a tournament</button>`
+              : html`<span class="muted">A casual lobby with a tournament-style name?</span><button>Not a tournament</button>`}
+          </form>`
+        : ""}
     </section>
     ${playersTable(m, player.id)}
     ${m.games.map((g) => gameCard(g, m, player.id))}`,

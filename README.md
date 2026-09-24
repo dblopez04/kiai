@@ -165,6 +165,11 @@ match has every map played and every player's score.
   (**Against**), result, source, match cost, maps played and date. Sort by date, match cost,
   maps, average score, accuracy or name. In a 1v1 the other player is your opponent. In a
   qualifier or free-for-all lobby, everyone else counts as an opponent.
+- **Not a tournament:** a casual lobby with a tournament-style name (`ABC: (you) vs (friend)`)
+  counts as a tournament until you press **Not a tournament** on its match page. It then shows
+  as plain stable multiplayer: the tournament Type box no longer covers it, and it
+  leaves the tournament count. Fetching the match again keeps the mark; **Count as a
+  tournament** undoes it.
 - **Tournament scores** searches every score in saved matches with the score library's filters
   (mods, PP, stars, speed, rank, best per map...), plus player (you, anyone, or `all`), match
   name and source. NoFail is ignored in mod filters, since tournaments force it, so NM means

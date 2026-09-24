@@ -12,7 +12,7 @@ import {
   parseTournamentScoreFilters,
 } from "../src/matches/query.ts";
 import { enqueueMatches, queueOverview } from "../src/matches/queue.ts";
-import { fetchMatch, ingestMatch, updateMatchSettings } from "../src/matches/store.ts";
+import { fetchMatch, ingestMatch, setNotTournament, updateMatchSettings } from "../src/matches/store.ts";
 import { createMatchStepper, type MatchWorkerDeps } from "../src/matches/worker.ts";
 import { createPpCalculator } from "../src/scores/pp.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
@@ -293,6 +293,25 @@ describe("searching matches", () => {
     expect(await scores({})).toBe(11);
     expect(await scores({ hide: "romai,etx,omm" })).toBe(8);
     expect(await scores({ hide: "tournament" })).toBe(4);
+  });
+
+  it("stops counting a casual lobby with a tournament-style name as a tournament", async () => {
+    const [row] = await db.sql<{ id: number }[]>`select id from matches where external_id = 2`;
+    const id = row!.id;
+    const kind = async () => (await listMatches(db.sql, USER_ID, parseMatchFilters(q({ q: "ABC" })))).matches[0]!.kind;
+    expect(await setNotTournament(db.sql, id, true)).toBe(true);
+    expect(await kind()).toBe("other");
+    expect(await names({ hide: "tournament" })).toEqual([2]);
+    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, tournaments: 2 });
+    const scores = async (params: Record<string, string>) =>
+      (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
+    expect(await scores({ hide: "tournament" })).toBe(2);
+    // Fetching the match again keeps the mark.
+    await save(stableMatch({ id: 2, name: "ABC: (tester) vs (RivalTwo)", games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 1], [OPPONENT_B, 2]] }] }));
+    expect(await kind()).toBe("other");
+    expect(await setNotTournament(db.sql, id, false)).toBe(true);
+    expect(await kind()).toBe("tournament");
+    expect(await setNotTournament(db.sql, 999_999, true)).toBe(false);
   });
 
   it("searches tournament scores with the score library's filters", async () => {

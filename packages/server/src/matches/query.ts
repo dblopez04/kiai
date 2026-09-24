@@ -175,6 +175,8 @@ export interface MatchListItem {
   name: string;
   acronym: string | null;
   kind: MatchKind;
+  /** Marked as a casual lobby despite a tournament-style name. */
+  not_tournament: boolean;
   red_name: string | null;
   blue_name: string | null;
   start_time: string | null;
@@ -212,7 +214,7 @@ const kindOf = (sql: Sql) => {
   return sql`(case
     when m.source = 'lazer' then 'ranked'
     ${bots.reduce((all, when) => sql`${all} ${when}`)}
-    when m.acronym is not null then 'tournament'
+    when m.acronym is not null and not m.not_tournament then 'tournament'
     else 'other' end)`;
 };
 
@@ -254,7 +256,8 @@ function toMatchListItem(row: Row): MatchListItem {
     url: matchUrl(row.source, row.external_id),
     name: row.name,
     acronym: row.acronym,
-    kind: matchKind({ source: row.source, name: row.name, acronym: row.acronym }),
+    kind: matchKind({ source: row.source, name: row.name, acronym: row.acronym, notTournament: row.not_tournament }),
+    not_tournament: row.not_tournament,
     red_name: row.red_name,
     blue_name: row.blue_name,
     start_time: iso(row.start_time),
