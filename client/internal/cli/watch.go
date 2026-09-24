@@ -15,7 +15,6 @@ import (
 	"github.com/dblopez04/kiai/client/internal/config"
 	"github.com/dblopez04/kiai/client/internal/fsutil"
 	"github.com/dblopez04/kiai/client/internal/kiaiapi"
-	"github.com/dblopez04/kiai/client/internal/launch"
 	"github.com/dblopez04/kiai/client/internal/paths"
 )
 
@@ -132,13 +131,6 @@ func (w *watcher) markExisting() {
 	}
 }
 
-func (w *watcher) devserver() string {
-	if session := launch.ReadSession(w.p.SessionFile); session != nil && session.Devserver != nil {
-		return *session.Devserver
-	}
-	return ""
-}
-
 func (w *watcher) tick() error {
 	now := w.now()
 	changed := false
@@ -161,7 +153,7 @@ func (w *watcher) tick() error {
 		if now.Before(w.retryAfter[file]) {
 			continue
 		}
-		devserver := w.devserver()
+		devserver := w.cfg.Devserver
 		replay, err := w.client.UploadReplay(file, devserver)
 		if err != nil {
 			w.log("upload of %s failed, retrying in %s: %v", filepath.Base(file), uploadRetry, err)
