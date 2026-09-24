@@ -9,6 +9,7 @@ import {
   getMatchDetail,
   listMatches,
   listTournamentScores,
+  matchFiltersToParams,
   matchStats,
   parseMatchFilters,
   parseTournamentScoreFilters,
@@ -328,6 +329,15 @@ describe("saving matches", () => {
     expect([detail.red_wins, detail.blue_wins]).toEqual([2, 2]);
     expect(detail.me!.games_played).toBe(4);
 
+    // The match list shows them and filters on them, and a match with none is "none found".
+    const plain = await save(teamMatch(90009));
+    await enqueueMatches(db.sql, [{ source: "stable", externalId: 90009 }], { addedVia: "manual", refetch: true });
+    const listed = async (warmups: string) =>
+      (await listMatches(db.sql, USER_ID, parseMatchFilters(q(warmups ? { warmups } : {})))).matches.map((m) => [m.id, m.warmup_maps, m.refetching]);
+    expect(await listed("found")).toEqual([[id, [1], false]]);
+    expect(await listed("none")).toEqual([[plain, [], true]]);
+    expect(await listed("")).toHaveLength(2);
+
     // A warmup count wins over the host.
     await updateMatchSettings(db.sql, id, { warmups: 0, skipLast: 0, ezMultiplier: 1.8 });
     expect((await getMatchDetail(db.sql, USER_ID, id))!.me!.games_played).toBe(5);
@@ -434,6 +444,24 @@ describe("saving matches", () => {
     const queued = await db.sql`select external_id, kind, priority from match_queue order by external_id`;
     expect(queued.map((r) => [Number(r.external_id), r.kind, r.priority])).toEqual([[90010, "fetch", 2], [90011, "fetch", 2]]);
     expect((await getMatchDetail(db.sql, USER_ID, tournament))!.me!.games_played).toBe(5);
+  });
+
+  it("saves which maps are warmups for saved matches and retries ranked play rooms that failed", async () => {
+    const id = await save(teamMatch(90015));
+    await updateMatchSettings(db.sql, id, { warmups: 2, skipLast: 0, ezMultiplier: 1.8 });
+    await enqueueMatches(db.sql, [{ source: "lazer", externalId: 4002 }, { source: "stable", externalId: 90016 }], { addedVia: "manual" });
+    await db.sql`update match_queue set failed = true, attempts = 1, last_error = 'This match is private on osu!.'`;
+    await db.sql`alter table match_games drop column warmup`;
+    await db.sql`delete from schema_migrations where name = '014_match_game_warmup.sql'`;
+
+    expect(await migrate(db.sql)).toEqual(["014_match_game_warmup.sql"]);
+    const games = await db.sql`select warmup from match_games where match_id = ${id} order by position`;
+    expect(games.map((g) => g.warmup)).toEqual([true, true, false, false, false]);
+    const queued = await db.sql`select source, failed, last_error from match_queue order by source`;
+    expect(queued).toEqual([
+      { source: "lazer", failed: false, last_error: null },
+      { source: "stable", failed: true, last_error: "This match is private on osu!." },
+    ]);
   });
 
   it("saves lazer ranked play rooms as 1v1s, keeping osu!'s PP", async () => {
@@ -550,10 +578,14 @@ describe("searching matches", () => {
     await save(duel(7, "tester's lobby"));
     await save(duel(8, "ABC: Qualifiers Lobby 3"));
     await save(duel(9, "QRT: (Tryouts) Lobby A"));
-    const all = (await listMatches(db.sql, USER_ID, parseMatchFilters(q()))).matches;
+    const all = (await listMatches(db.sql, USER_ID, parseMatchFilters(q({ hide: "none" })))).matches;
     expect(Object.fromEntries(all.map((m) => [m.external_id, m.kind]))).toEqual({
       1: "tournament", 2: "tournament", 3: "tournament", 4: "romai", 5: "etx", 6: "omm", 7: "other", 8: "qualifiers", 9: "qualifiers",
     });
+    // With no Type given, only tournaments show; links leave that default out and spell out "none".
+    expect((await names({})).sort()).toEqual([1, 2, 3]);
+    expect(matchFiltersToParams(parseMatchFilters(q())).toString()).toBe("");
+    expect(matchFiltersToParams(parseMatchFilters(q({ hide: "none" }))).toString()).toBe("hide=none");
     expect((await names({ hide: "tournament" })).sort()).toEqual([4, 5, 6, 7, 8, 9]);
     expect((await names({ hide: "qualifiers" })).sort()).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect((await names({ hide: "romai" })).sort()).toEqual([1, 2, 3, 5, 6, 7, 8, 9]);
@@ -569,10 +601,11 @@ describe("searching matches", () => {
     expect(await shown()).toEqual([]);
     expect(parseMatchFilters(form("tournament", "ranked")).hide).toEqual(["qualifiers", "romai", "etx", "omm", "other"]);
     // Qualifiers count towards their tournament: ABC already has matches, QRT is new.
-    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 9, tournaments: 4 });
+    expect(await matchStats(db.sql, USER_ID, parseMatchFilters(q({ hide: "none" })))).toMatchObject({ matches: 9, tournaments: 4 });
     const scores = async (params: Record<string, string>) =>
       (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
-    expect(await scores({})).toBe(13);
+    expect(await scores({ hide: "none" })).toBe(13);
+    expect(await scores({})).toBe(await scores({ hide: "qualifiers,romai,etx,omm,ranked,other" }));
     expect(await scores({ hide: "romai,etx,omm" })).toBe(10);
     expect(await scores({ hide: "tournament" })).toBe(6);
     expect(await scores({ hide: "qualifiers,other" })).toBe(10);
@@ -581,12 +614,12 @@ describe("searching matches", () => {
   it("stops counting a casual lobby with a tournament-style name as a tournament", async () => {
     const [row] = await db.sql<{ id: number }[]>`select id from matches where external_id = 2`;
     const id = row!.id;
-    const kind = async () => (await listMatches(db.sql, USER_ID, parseMatchFilters(q({ q: "ABC" })))).matches[0]!.kind;
+    const kind = async () => (await listMatches(db.sql, USER_ID, parseMatchFilters(q({ q: "ABC", hide: "none" })))).matches[0]!.kind;
     expect(await setNotTournament(db.sql, id, true)).toBe(true);
     expect(await kind()).toBe("other");
     expect(await names({ hide: "tournament" })).toEqual([2]);
     expect(await names({ hide: "other" })).not.toContain(2);
-    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, tournaments: 2 });
+    expect(await matchStats(db.sql, USER_ID, parseMatchFilters(q({ hide: "none" })))).toMatchObject({ matches: 3, tournaments: 2 });
     const scores = async (params: Record<string, string>) =>
       (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
     expect(await scores({ hide: "tournament" })).toBe(2);

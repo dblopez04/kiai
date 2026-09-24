@@ -151,7 +151,8 @@ match has every map played and every player's score.
   newest one. It fetches the lobbies with tournament-style names (`ACR: (A) vs (B)`, qualifier
   lobbies) or your name, and keeps those you played in. Ranked play rooms come from your
   profile's ranked play history (`osu.ppy.sh/users/<id>/ranked-play`), so all of them are queued
-  directly. Stable gets three crawl turns out of four. The stable crawl starts
+  directly. Rooms are read from the room page's events route (`osu.ppy.sh/multiplayer/rooms/<id>/events`),
+  which needs no token. Stable gets three crawl turns out of four. The stable crawl starts
   at the newest lobby; **Scan from match id** (or `server matches scan-from <id>`) backfills from
   an older match, for example to catch qualifiers Elitebotix hid. Pause either crawler on the
   page, or set `MATCH_DISCOVERY=false`.
@@ -167,12 +168,16 @@ match has every map played and every player's score.
   A lobby where a player held the host for every map was made in game rather than by a ref, and
   finds none. Casual lobbies always have a player as host, so they find none either. A number in
   the Warmups box skips that many maps from the start instead; empty it to go back. Matches saved
-  before this are fetched again in the background to read their host changes. To leave out one map anywhere
+  before this are fetched again in the background to read their host changes; the match list
+  marks them **fetching** until then. The list shows each match's warmups (**warmup #1, #2**),
+  and the **Warmups** filter finds matches with warmups (**found**) or tournament and qualifier
+  matches without any (**none found**), to check them without opening each one. To leave out one map anywhere
   (a tiebreaker played for fun after the match was decided, say), open **⋯** on that map and
   press **Leave out of the match**; fetching the match again keeps it out.
 - **Type boxes:** tournament, qualifiers (tournament-style names with qualifiers, quals or
   tryouts in them, which still count towards their tournament), the ROMAI, ETX and o!mm
-  matchmaking bots, ranked play, and other. All start ticked; untick one to hide it.
+  matchmaking bots, ranked play, and other. Only tournament starts ticked; tick the others to
+  show them, untick one to hide it.
 - **Searching matches:** by name, teammates (**With**: players on your side), opponents
   (**Against**), result, source, match cost, maps played and date. Sort by date, match cost,
   maps, average score, accuracy or name. In a 1v1 the other player is your opponent. In a
@@ -350,7 +355,7 @@ Same privacy rules as the pages: private hostnames only. Uploads also need `UPLO
 | `GET /api/render/dry-run?replay=<id>` | Which preset the rules pick for a replay, and why |
 | `PUT /api/skins/:name` | Upload an .osk (raw body, bearer token); replaces a skin of that name |
 | `GET /replays/:id/video` | The rendered mp4, with byte ranges |
-| `GET /api/matches?…filters` | Paged matches. Filters: `q`, `sort` (`date`, `match_cost`, `maps`, `avg_score`, `accuracy`, `name`), `order`, `page`, `page_size`, `hide` (match types to leave out: `tournament`, `qualifiers`, `romai`, `etx`, `omm` for the ROMAI, ETX and o!mm matchmaking bots, `ranked` for ranked play, `other` for any other lobby; comma-separated), `with`, `vs` (comma-separated names or ids), `result` (`won`, `lost`), `played`, `min_cost`/`max_cost`, `min_maps`/`max_maps`, `date_from`/`date_to` |
+| `GET /api/matches?…filters` | Paged matches. Filters: `q`, `sort` (`date`, `match_cost`, `maps`, `avg_score`, `accuracy`, `name`), `order`, `page`, `page_size`, `hide` (match types to leave out: `tournament`, `qualifiers`, `romai`, `etx`, `omm` for the ROMAI, ETX and o!mm matchmaking bots, `ranked` for ranked play, `other` for any other lobby; comma-separated; `none` shows every type; left out, only tournaments show), `with`, `vs` (comma-separated names or ids), `result` (`won`, `lost`), `warmups` (`found`, `none`), `played`, `min_cost`/`max_cost`, `min_maps`/`max_maps`, `date_from`/`date_to` |
 | `GET /api/matches/:id` | One match: players with match costs, every map and score |
 | `GET /api/matches/scores?…filters` | Tournament scores: the `/api/scores` filters plus `player` (`me`, `all`, a name or id), `match` and `hide` |
 | `GET /api/matches/stats` | Record, match costs and tournament count |

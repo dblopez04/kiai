@@ -233,8 +233,8 @@ export async function recomputeMatch(sql: Db, matchId: number): Promise<void> {
     where id = ${matchId}`;
   if (analysis.games.length) {
     await sql`
-      update match_games g set counted = r.counted, winner = r.winner, red_score = r."redScore", blue_score = r."blueScore"
-      from jsonb_to_recordset(${sqlJson(sql, analysis.games)}) as r(id bigint, counted boolean, winner text, "redScore" bigint, "blueScore" bigint)
+      update match_games g set counted = r.counted, warmup = r.warmup, winner = r.winner, red_score = r."redScore", blue_score = r."blueScore"
+      from jsonb_to_recordset(${sqlJson(sql, analysis.games)}) as r(id bigint, counted boolean, warmup boolean, winner text, "redScore" bigint, "blueScore" bigint)
       where g.id = r.id`;
   }
   await sql`delete from match_players where match_id = ${matchId}`;

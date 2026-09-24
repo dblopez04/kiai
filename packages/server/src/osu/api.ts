@@ -172,7 +172,10 @@ export class OsuApi implements OsuClient {
   }
 
   async getRoomEvents(roomId: number, after?: number): Promise<ApiRoomEvents | null> {
-    return this.#getJson<ApiRoomEvents>(`/api/v2/rooms/${roomId}/events`, { after, limit: 101 }, { nullOn404: true });
+    // The room page's events route: same JSON as API v2's `GET /rooms/{id}/events`, but it needs
+    // no token. The API route turns away client-credentials tokens, which have no user.
+    const response = await this.#request(this.#url(`/multiplayer/rooms/${roomId}/events`, { after, limit: 101 }), { auth: false, nullOn404: true });
+    return response ? ((await response.json()) as ApiRoomEvents) : null;
   }
 
   async listUserRankedPlayRooms(userId: number, options: { limit: number; cursorString?: string }): Promise<ApiRoomList> {

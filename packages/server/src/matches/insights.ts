@@ -7,7 +7,7 @@ import type { PendingQuery, Row } from "postgres";
 import type { Sql } from "../db/index.ts";
 import { searchWords, toBeatmapView, type BeatmapView } from "../scores/query.ts";
 import { MATCH_KINDS, type MatchKind } from "./normalize.ts";
-import { hiddenKinds, kindOf } from "./query.ts";
+import { hiddenKinds, kindOf, setHiddenKinds } from "./query.ts";
 
 export interface InsightFilters {
   /** Kinds left out, like the match list's Type boxes. */
@@ -36,7 +36,7 @@ export function parseInsightFilters(params: URLSearchParams): InsightFilters {
 
 export function insightFiltersToParams(f: InsightFilters): URLSearchParams {
   const params = new URLSearchParams();
-  if (f.hide.length) params.set("hide", f.hide.join(","));
+  setHiddenKinds(params, f.hide);
   if (f.q) params.set("q", f.q);
   if (f.dateFrom) params.set("date_from", f.dateFrom);
   if (f.dateTo) params.set("date_to", f.dateTo);

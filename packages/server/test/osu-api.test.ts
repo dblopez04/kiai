@@ -49,12 +49,25 @@ describe("OsuApi", () => {
     expect(requests.slice(1)).toEqual(["GET /api/v2/beatmaps?ids%5B%5D=1&ids%5B%5D=2", "GET /api/v2/beatmaps/7/scores/users/5/all?ruleset=osu&legacy_only=0"]);
   });
 
+  it("reads ranked play rooms from the website's routes, without a token", async () => {
+    const seen: (string | null)[] = [];
+    const { api, requests } = client((url, init) => {
+      seen.push(new Headers(init.headers).get("authorization"));
+      return url.pathname.endsWith("/events") ? Response.json({ room: { id: 9 }, events: [] }) : Response.json({ rooms: [] });
+    });
+    expect(await api.getRoomEvents(9, 5)).toEqual({ room: { id: 9 }, events: [] });
+    expect(await api.listUserRankedPlayRooms(2, { limit: 50 })).toEqual({ rooms: [] });
+    expect(requests).toEqual(["GET /multiplayer/rooms/9/events?after=5&limit=101", "GET /users/2/ranked-play?is_active=0&limit=50"]);
+    expect(seen).toEqual([null, null]);
+  });
+
   it("returns null or empty for 404s where that means 'gone'", async () => {
     const { api } = client(() => new Response("not found", { status: 404 }));
     expect(await api.getScore(1)).toBeNull();
     expect(await api.getUser(1)).toBeNull();
     expect(await api.getBeatmapUserScores(1, 1)).toEqual([]);
     expect(await api.getBeatmapFile(1)).toBeNull();
+    expect(await api.getRoomEvents(1)).toBeNull();
     await expect(api.getRecentScores(1, 100, 0)).rejects.toMatchObject({ status: 404 });
   });
 
