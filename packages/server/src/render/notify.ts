@@ -1,6 +1,7 @@
 // Discord notifications when a render finishes or fails. A DM needs a bot that shares a server
-// with you (webhooks can't DM); a webhook into a private channel needs no bot. The message links
-// the public replay page, whose og:video tags make Discord play the video inline.
+// with you (webhooks can't DM); a webhook into a private channel needs no bot. Videos are never
+// uploaded to Discord: the message links the public replay page, whose video tags make Discord
+// play it inline.
 
 import { errorMessage } from "../errors.ts";
 import type { ReplayView } from "../replays/store.ts";
@@ -23,7 +24,6 @@ export interface DiscordOptions {
   fetch?: typeof fetch;
 }
 
-const RANK_COLORS: Record<string, number> = { X: 0xffd54a, XH: 0xd9d9d9, S: 0xffab40, SH: 0xc0c0c0, A: 0x6ee39a, B: 0x7fb0ff, C: 0xc79bff, D: 0xff8a8a };
 const RANK_LABEL: Record<string, string> = { X: "SS", XH: "SS", SH: "S" };
 
 export function replayTitle(r: ReplayView): string {
@@ -54,32 +54,24 @@ export function playSummary(r: ReplayView): string {
   return parts.join(" · ");
 }
 
+/** Discord markdown in names and titles shouldn't format the message. */
+export const escapeMarkdown = (text: string) => text.replace(/[\\*_~`|>]/g, "\\$&");
+
+/**
+ * The message for a finished render: text only, with no embed of its own, because Discord
+ * doesn't unfurl links in a message that already has one. The link's page then shows as the
+ * playable video.
+ */
 export function renderedMessage(r: ReplayView, publicUrl: string | undefined) {
   const link = publicUrl ? publicReplayUrl(publicUrl, r.id) : undefined;
   const a = r.attributes;
-  const fields = [
-    ...(a ? [{ name: "Map", value: `${a.stars.toFixed(2)}★ · AR ${a.ar} · OD ${a.od} · CS ${a.cs} · ${Math.round(a.bpm)} BPM`, inline: false }] : []),
-    { name: "Player", value: r.player_name || "?", inline: true },
-    { name: "Server", value: r.devserver ?? "osu!", inline: true },
-    ...(r.render?.preset ? [{ name: "Preset", value: r.render.preset, inline: true }] : []),
+  const lines = [
+    `**${escapeMarkdown(replayTitle(r))}**`,
+    escapeMarkdown(`${playSummary(r)} · ${r.player_name || "?"}${r.devserver ? ` on ${r.devserver}` : ""}`),
+    ...(a ? [`${a.stars.toFixed(2)}★ · AR ${a.ar} · OD ${a.od} · CS ${a.cs} · ${Math.round(a.bpm)} BPM`] : []),
+    link ?? "Rendered. Set PUBLIC_URL on the server to get a link here.",
   ];
-  return {
-    // The bare link is what Discord unfurls into a playable video.
-    content: link ?? "Rendered. Set PUBLIC_URL on the server to get a link here.",
-    embeds: [
-      {
-        title: replayTitle(r).slice(0, 256),
-        ...(link ? { url: link } : {}),
-        description: playSummary(r),
-        color: RANK_COLORS[r.rank] ?? 0xff66aa,
-        ...(r.beatmap?.cover_url ? { thumbnail: { url: r.beatmap.cover_url } } : {}),
-        fields,
-        timestamp: r.played_at,
-        footer: { text: "kiai" },
-      },
-    ],
-    allowed_mentions: { parse: [] },
-  };
+  return { content: lines.join("\n"), allowed_mentions: { parse: [] } };
 }
 
 export function failedMessage(r: ReplayView, error: string) {
