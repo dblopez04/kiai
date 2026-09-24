@@ -62,8 +62,7 @@ describe("match pages", () => {
     expect(body).toContain("3–2");
     expect(body).toContain("Mate");
     expect(body).toContain("Stable tournament lobbies");
-    for (const kind of ["tournament", "romai", "etx", "omm", "ranked"]) expect(body).toContain(`name="show" value="${kind}" checked`);
-    expect(body).not.toContain(`name="show" value="other"`);
+    for (const kind of ["tournament", "qualifiers", "romai", "etx", "omm", "ranked", "other"]) expect(body).toContain(`name="show" value="${kind}" checked`);
   });
 
   it("shows one match with every map, score and match cost", async () => {
@@ -84,6 +83,34 @@ describe("match pages", () => {
     const detail = (await (await request(`/api/matches/${matchId}`)).json()) as { warmups: number; me: { games_played: number } };
     expect(detail.warmups).toBe(1);
     expect(detail.me.games_played).toBe(4);
+    expect(await (await request(`/matches/${matchId}`)).text()).toContain("The first map is a warmup");
+    // An empty box goes back to finding them from the host (this match has no host changes).
+    await post(`/matches/${matchId}/settings`, { warmups: "", skip_last: "0", ez_multiplier: "1" });
+    const auto = (await (await request(`/api/matches/${matchId}`)).json()) as { warmups: number | null; me: { games_played: number } };
+    expect(auto.warmups).toBeNull();
+    expect(auto.me.games_played).toBe(5);
+    expect(await (await request(`/matches/${matchId}`)).text()).toContain("No warmups found from the host");
+    await post(`/matches/${matchId}/settings`, { warmups: "1", skip_last: "0", ez_multiplier: "1" });
+  });
+
+  it("leaves one map out from its menu and counts it again", async () => {
+    type Detail = { me: { games_played: number }; games: { id: number; excluded: boolean; counted: boolean }[] };
+    const detail = async () => (await (await request(`/api/matches/${matchId}`)).json()) as Detail;
+    const before = await detail();
+    const last = before.games.at(-1)!;
+    expect(await (await request(`/matches/${matchId}`)).text()).toContain(`action="/matches/${matchId}/games/${last.id}/excluded"`);
+    const response = await post(`/matches/${matchId}/games/${last.id}/excluded`, { excluded: "true" });
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(`/matches/${matchId}#game-${last.id}`);
+    const after = await detail();
+    expect(after.games.at(-1)).toMatchObject({ excluded: true, counted: false });
+    expect(after.me.games_played).toBe(before.me.games_played - 1);
+    const body = await (await request(`/matches/${matchId}`)).text();
+    expect(body).toContain("left out</span>");
+    expect(body).toContain("Count this map again</button>");
+    await post(`/matches/${matchId}/games/${last.id}/excluded`, { excluded: "false" });
+    expect((await detail()).me.games_played).toBe(before.me.games_played);
+    expect((await post(`/matches/999999/games/${last.id}/excluded`, { excluded: "true" })).status).toBe(404);
   });
 
   it("marks a match as not a tournament and back", async () => {

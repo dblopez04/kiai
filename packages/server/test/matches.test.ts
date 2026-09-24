@@ -3,7 +3,7 @@ import { migrate } from "../src/db/index.ts";
 import { analyzeMatch, type CostGame } from "../src/matches/cost.ts";
 import { crawlLazer, crawlStable, encodeCursor, scanStableFrom } from "../src/matches/discovery.ts";
 import { parseMatchRefs } from "../src/matches/import.ts";
-import { isCandidateName, matchmakingBot, parseMatchName } from "../src/matches/normalize.ts";
+import { isCandidateName, matchmakingBot, normalizeStableMatch, parseMatchName } from "../src/matches/normalize.ts";
 import {
   canonicalMatchFilters,
   getMatchDetail,
@@ -15,7 +15,7 @@ import {
   resolveUsers,
 } from "../src/matches/query.ts";
 import { enqueueMatches, queueOverview } from "../src/matches/queue.ts";
-import { fetchMatch, ingestMatch, setNotTournament, updateMatchSettings } from "../src/matches/store.ts";
+import { fetchMatch, ingestMatch, setGameExcluded, setNotTournament, updateMatchSettings } from "../src/matches/store.ts";
 import { createMatchStepper, type MatchWorkerDeps } from "../src/matches/worker.ts";
 import { createPpCalculator } from "../src/scores/pp.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
@@ -121,6 +121,90 @@ describe("match cost (Bathbot's formula)", () => {
     // Game 3: 600k (EZ ×1.5) vs 600k: a draw.
     expect(result.games[2]!.winner).toBeNull();
   });
+
+  it("leaves out maps marked by hand, after warmups and skipped maps go by position", () => {
+    const games = [
+      game(1, [[1, 100_000], [2, 900_000]], "head-to-head"),
+      { ...game(2, [[1, 500_000], [2, 400_000]], "head-to-head"), excluded: true },
+      game(3, [[1, 600_000], [2, 400_000]], "head-to-head"),
+      game(4, [[1, 1], [2, 999_999]], "head-to-head"),
+    ];
+    const result = analyzeMatch(games, { ...options, warmups: 1 });
+    expect(result.games.map((g) => g.counted)).toEqual([false, false, true, true]);
+    expect([result.redWins, result.blueWins]).toEqual([1, 1]);
+    expect(result.players.find((p) => p.userId === 1)!.gamesPlayed).toBe(2);
+  });
+
+  it("drops the tiebreaker bonus when a fun tiebreaker is left out", () => {
+    const r = (a: number, b: number): [number, number, "red"][] => [[1, a, "red"], [2, b, "red"]];
+    const b = (a: number, c: number): [number, number, "blue"][] => [[3, a, "blue"], [4, c, "blue"]];
+    const games = [
+      game(1, [...r(600_000, 600_000), ...b(400_000, 400_000)]),
+      game(2, [...r(600_000, 600_000), ...b(400_000, 400_000)]),
+      game(3, [...r(600_000, 600_000), ...b(400_000, 400_000)]),
+      game(4, [...r(400_000, 400_000), ...b(600_000, 600_000)]),
+      game(5, [...r(400_000, 400_000), ...b(600_000, 600_000)]),
+      game(6, [...r(400_000, 400_000), ...b(600_000, 600_000)]),
+      game(7, [...r(600_000, 600_000), ...b(400_000, 400_000)]),
+    ];
+    expect(analyzeMatch(games, options).tiebreaker).toBe(true);
+    const funTiebreaker = games.map((g) => (g.id === 7 ? { ...g, excluded: true } : g));
+    const result = analyzeMatch(funTiebreaker, options);
+    expect(result.tiebreaker).toBe(false);
+    expect([result.redWins, result.blueWins]).toEqual([3, 3]);
+    expect(result.players.every((p) => p.tiebreakerBonus === 0)).toBe(true);
+  });
+
+  describe("warmups from the host", () => {
+    const REF = 99;
+    const hosted = (hosts: (number | null)[]) =>
+      hosts.map((hostId, i) => ({ ...game(i + 1, [[1, 500_000 + i], [2, 400_000]], "head-to-head"), hostId }));
+    const warmups = (games: CostGame[]) =>
+      analyzeMatch(games, { ...options, warmups: "host" }).games.filter((g) => g.warmup).map((g) => g.id);
+
+    it("leaves out maps played while a player held the host, two at most", () => {
+      expect(warmups(hosted([1, 2, null, null]))).toEqual([1, 2]);
+      expect(warmups(hosted([1, 2, 2, null]))).toEqual([1, 2]);
+      // Not only at the start: a host handed out mid-match counts too.
+      expect(warmups(hosted([null, 1, null]))).toEqual([2]);
+      const result = analyzeMatch(hosted([1, null, null]), { ...options, warmups: "host" });
+      expect(result.games.map((g) => g.counted)).toEqual([false, true, true]);
+      expect(result.players.find((p) => p.userId === 1)!.gamesPlayed).toBe(2);
+    });
+
+    it("ignores a host who didn't play, and a lobby a player hosted throughout", () => {
+      expect(warmups(hosted([REF, REF, null]))).toEqual([]);
+      expect(warmups(hosted([1, 1, 1]))).toEqual([]);
+      expect(warmups(hosted([null, null]))).toEqual([]);
+      // Unfinished games aren't warmups, and don't count as games without a player host.
+      const aborted = hosted([1, null]);
+      aborted[1] = { ...aborted[1]!, ended: false };
+      expect(warmups(aborted)).toEqual([]);
+    });
+
+    it("uses a warmup count instead when one is set", () => {
+      expect(analyzeMatch(hosted([1, null, null]), { ...options, warmups: 0 }).games.map((g) => g.warmup)).toEqual([false, false, false]);
+      expect(analyzeMatch(hosted([null, null, 1]), { ...options, warmups: 1 }).games.map((g) => g.warmup)).toEqual([true, false, false]);
+    });
+  });
+});
+
+describe("normalizing stable matches", () => {
+  it("tracks who holds the host when each game starts", () => {
+    const match = stableMatch({
+      id: 1,
+      name: "TST: (A) vs (B)",
+      games: [
+        { beatmapId: 11, plays: [[USER_ID, 1]], host: USER_ID },
+        { beatmapId: 12, plays: [[USER_ID, 1]], host: 0 },
+        { beatmapId: 13, plays: [[USER_ID, 1]], host: TEAMMATE },
+        { beatmapId: 14, plays: [[USER_ID, 1]] },
+      ],
+    });
+    // The host leaving before the last game: nobody holds it.
+    match.events.splice(-1, 0, { id: 1, detail: { type: "player-left" }, user_id: TEAMMATE });
+    expect(normalizeStableMatch([match]).games.map((g) => g.hostId)).toEqual([USER_ID, null, TEAMMATE, null]);
+  });
 });
 
 describe("names and imports", () => {
@@ -202,6 +286,57 @@ describe("saving matches", () => {
     expect(detail.me!.games_played).toBe(4);
   });
 
+  it("finds warmups from the host in tournament lobbies", async () => {
+    // A captain picks the warmup with the host, then the ref clears it for the mappool.
+    const hostWarmup = (id: number, name?: string) => {
+      const match = teamMatch(id, name ? { name } : {});
+      const [first, second] = match.events.filter((e) => e.game);
+      match.events.splice(match.events.indexOf(first!), 0, { id: 1, detail: { type: "host-changed" }, user_id: TEAMMATE });
+      match.events.splice(match.events.indexOf(second!), 0, { id: 2, detail: { type: "host-changed" }, user_id: 0 });
+      return match;
+    };
+    const id = await save(hostWarmup(90007));
+    const detail = (await getMatchDetail(db.sql, USER_ID, id))!;
+    expect(detail.warmups).toBeNull();
+    expect(detail.games.map((g) => g.warmup)).toEqual([true, false, false, false, false]);
+    expect(detail.games[0]).toMatchObject({ counted: false, host_id: TEAMMATE, host_name: "Mate" });
+    expect([detail.red_wins, detail.blue_wins]).toEqual([2, 2]);
+    expect(detail.me!.games_played).toBe(4);
+
+    // A warmup count wins over the host.
+    await updateMatchSettings(db.sql, id, { warmups: 0, skipLast: 0, ezMultiplier: 1.8 });
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.me!.games_played).toBe(5);
+    await updateMatchSettings(db.sql, id, { warmups: null, skipLast: 0, ezMultiplier: 1.8 });
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.me!.games_played).toBe(4);
+
+    // Casual lobbies always have a player as host, so it says nothing there.
+    await setNotTournament(db.sql, id, true);
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.games[0]!.warmup).toBe(false);
+    await setNotTournament(db.sql, id, false);
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.games[0]!.warmup).toBe(true);
+    const casual = await save(hostWarmup(90008, "tester's lobby"));
+    expect((await getMatchDetail(db.sql, USER_ID, casual))!.me!.games_played).toBe(5);
+  });
+
+  it("leaves one map out by hand and keeps it out when the match is fetched again", async () => {
+    const match = teamMatch(90006);
+    const id = await save(match);
+    const before = (await getMatchDetail(db.sql, USER_ID, id))!;
+    const last = before.games.at(-1)!;
+    expect(await setGameExcluded(db.sql, id, last.id, true)).toBe(true);
+    const after = (await getMatchDetail(db.sql, USER_ID, id))!;
+    expect(after.games.at(-1)).toMatchObject({ excluded: true, counted: false });
+    expect(after.me!.games_played).toBe(before.me!.games_played - 1);
+    expect(after.red_wins! + after.blue_wins!).toBe(before.red_wins! + before.blue_wins! - 1);
+    await save(match);
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.games.at(-1)!.excluded).toBe(true);
+    expect(await setGameExcluded(db.sql, id, last.id, false)).toBe(true);
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.me!.games_played).toBe(before.me!.games_played);
+    // A map from another match, or no map at all.
+    expect(await setGameExcluded(db.sql, id + 1, last.id, true)).toBe(false);
+    expect(await setGameExcluded(db.sql, id, 999_999, true)).toBe(false);
+  });
+
   describe("EZ multiplier", () => {
     const ezMatch = (id: number) =>
       stableMatch({
@@ -249,6 +384,31 @@ describe("saving matches", () => {
       const [game] = await db.sql`select counted, winner from match_games where match_id = ${id}`;
       expect(game).toMatchObject({ counted: true, winner: "red" });
     });
+  });
+
+  it("switches saved matches to finding warmups from the host and fetches tournaments again", async () => {
+    const duel = (id: number, name: string) =>
+      stableMatch({ id, name, games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 500_000], [OPPONENT_B, 400_000]] }] });
+    const tournament = await save(teamMatch(90010));
+    const counted = await save(teamMatch(90011));
+    await updateMatchSettings(db.sql, counted, { warmups: 1, skipLast: 0, ezMultiplier: 1.8 });
+    await save(duel(90012, "ROMAI: (tester) vs (RivalTwo)"));
+    await save(duel(90013, "tester's lobby"));
+    const casual = await save(duel(90014, "ABC: (tester) vs (friend)"));
+    await setNotTournament(db.sql, casual, true);
+    // Back to before the migration: no hosts, every warmup count a number.
+    await db.sql`alter table match_games drop column host_id`;
+    await db.sql`update matches set warmups = 0 where warmups is null`;
+    await db.sql`alter table matches alter column warmups set not null, alter column warmups set default 0`;
+    await db.sql`truncate match_queue`;
+    await db.sql`delete from schema_migrations where name = '012_match_warmup_detection.sql'`;
+
+    expect(await migrate(db.sql)).toEqual(["012_match_warmup_detection.sql"]);
+    const warmups = await db.sql`select external_id, warmups from matches where source = 'stable' order by external_id`;
+    expect(warmups.map((r) => [Number(r.external_id), r.warmups])).toEqual([[90010, null], [90011, 1], [90012, null], [90013, null], [90014, null]]);
+    const queued = await db.sql`select external_id, kind, priority from match_queue order by external_id`;
+    expect(queued.map((r) => [Number(r.external_id), r.kind, r.priority])).toEqual([[90010, "fetch", 2], [90011, "fetch", 2]]);
+    expect((await getMatchDetail(db.sql, USER_ID, tournament))!.me!.games_played).toBe(5);
   });
 
   it("saves lazer ranked play rooms as 1v1s, keeping osu!'s PP", async () => {
@@ -347,36 +507,41 @@ describe("searching matches", () => {
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, played: 2, won: 1, lost: 1, tournaments: 3 });
   });
 
-  it("hides tournaments, each matchmaking bot or ranked play, but never other lobbies", async () => {
+  it("hides tournaments, qualifiers, each matchmaking bot, ranked play or other lobbies", async () => {
     const duel = (id: number, name: string) =>
       stableMatch({ id, name, games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 500_000], [OPPONENT_B, 400_000]] }] });
     await save(duel(4, "ROMAI: (tester) vs (RivalTwo)"));
     await save(duel(5, "ETX: (tester) vs (RivalTwo)"));
     await save(duel(6, "o!mm Ranked: tester vs RivalTwo"));
     await save(duel(7, "tester's lobby"));
+    await save(duel(8, "ABC: Qualifiers Lobby 3"));
+    await save(duel(9, "QRT: (Tryouts) Lobby A"));
     const all = (await listMatches(db.sql, USER_ID, parseMatchFilters(q()))).matches;
     expect(Object.fromEntries(all.map((m) => [m.external_id, m.kind]))).toEqual({
-      1: "tournament", 2: "tournament", 3: "tournament", 4: "romai", 5: "etx", 6: "omm", 7: "other",
+      1: "tournament", 2: "tournament", 3: "tournament", 4: "romai", 5: "etx", 6: "omm", 7: "other", 8: "qualifiers", 9: "qualifiers",
     });
-    expect((await names({ hide: "tournament" })).sort()).toEqual([4, 5, 6, 7]);
-    expect((await names({ hide: "romai" })).sort()).toEqual([1, 2, 3, 5, 6, 7]);
-    expect((await names({ hide: "romai,etx,omm" })).sort()).toEqual([1, 2, 3, 7]);
-    // `other` has no box, so it can't be hidden, like any unknown kind.
-    expect((await names({ hide: "other,bogus" })).length).toBe(7);
+    expect((await names({ hide: "tournament" })).sort()).toEqual([4, 5, 6, 7, 8, 9]);
+    expect((await names({ hide: "qualifiers" })).sort()).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect((await names({ hide: "romai" })).sort()).toEqual([1, 2, 3, 5, 6, 7, 8, 9]);
+    expect((await names({ hide: "romai,etx,omm" })).sort()).toEqual([1, 2, 3, 7, 8, 9]);
+    expect((await names({ hide: "other,bogus" })).sort()).toEqual([1, 2, 3, 4, 5, 6, 8, 9]);
     // The form sends the ticked boxes, and a marker so unticking all of them still counts.
     const form = (...shown: string[]) => new URLSearchParams([["show", "-"], ...shown.map((kind): [string, string] => ["show", kind])]);
     const shown = async (...kinds: string[]) =>
       (await listMatches(db.sql, USER_ID, parseMatchFilters(form(...kinds)))).matches.map((m) => m.external_id).sort();
-    expect(await shown("tournament", "romai", "etx", "omm", "ranked")).toEqual([1, 2, 3, 4, 5, 6, 7]);
-    expect(await shown("tournament", "ranked")).toEqual([1, 2, 3, 7]);
-    expect(await shown()).toEqual([7]);
-    expect(parseMatchFilters(form("tournament", "ranked")).hide).toEqual(["romai", "etx", "omm"]);
-    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 7, tournaments: 3 });
+    expect(await shown("tournament", "qualifiers", "romai", "etx", "omm", "ranked", "other")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(await shown("tournament", "ranked")).toEqual([1, 2, 3]);
+    expect(await shown("other")).toEqual([7]);
+    expect(await shown()).toEqual([]);
+    expect(parseMatchFilters(form("tournament", "ranked")).hide).toEqual(["qualifiers", "romai", "etx", "omm", "other"]);
+    // Qualifiers count towards their tournament: ABC already has matches, QRT is new.
+    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 9, tournaments: 4 });
     const scores = async (params: Record<string, string>) =>
       (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
-    expect(await scores({})).toBe(11);
-    expect(await scores({ hide: "romai,etx,omm" })).toBe(8);
-    expect(await scores({ hide: "tournament" })).toBe(4);
+    expect(await scores({})).toBe(13);
+    expect(await scores({ hide: "romai,etx,omm" })).toBe(10);
+    expect(await scores({ hide: "tournament" })).toBe(6);
+    expect(await scores({ hide: "qualifiers,other" })).toBe(10);
   });
 
   it("stops counting a casual lobby with a tournament-style name as a tournament", async () => {
@@ -386,6 +551,7 @@ describe("searching matches", () => {
     expect(await setNotTournament(db.sql, id, true)).toBe(true);
     expect(await kind()).toBe("other");
     expect(await names({ hide: "tournament" })).toEqual([2]);
+    expect(await names({ hide: "other" })).not.toContain(2);
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, tournaments: 2 });
     const scores = async (params: Record<string, string>) =>
       (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;

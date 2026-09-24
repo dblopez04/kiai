@@ -13,6 +13,7 @@ import {
   type PersonStats,
   type Streak,
 } from "../matches/insights.ts";
+import { MATCH_KINDS } from "../matches/normalize.ts";
 import { DEFAULT_MATCH_FILTERS, matchFiltersToParams, type MatchFilters } from "../matches/query.ts";
 import type { Player } from "../player.ts";
 import { KIND_LABEL, kindFieldset } from "./match-views.ts";
@@ -247,10 +248,12 @@ function eventsPanel(d: MatchInsights, f: InsightFilters): Html | string {
     <div class="tablewrap"><table class="scores compact">
       <thead><tr><th>Event</th><th class="r">Matches</th><th class="r">Record</th><th class="r">Avg MC</th><th class="r">Best MC</th><th>Played</th></tr></thead>
       <tbody>${d.events.map((e) => {
-        const label = e.kind === "tournament" ? e.label : KIND_LABEL[e.kind];
-        const link = e.kind === "tournament" ? matchesLink(f, { q: e.label }) : matchesLink(f, { hide: ["tournament", "romai", "etx", "omm", "ranked"].filter((k) => k !== e.kind) as MatchFilters["hide"] });
+        // A tournament's qualifiers count with its matches, under its acronym.
+        const tournament = e.kind === "tournament" || e.kind === "qualifiers";
+        const label = tournament ? e.label : KIND_LABEL[e.kind];
+        const link = tournament ? matchesLink(f, { q: e.label }) : matchesLink(f, { hide: MATCH_KINDS.filter((k) => k !== e.kind) });
         return html`<tr>
-          <td class="clip match"><a href="${link}">${label}</a>${e.kind === "tournament" ? "" : html` <span class="chip">matchmaking</span>`}</td>
+          <td class="clip match"><a href="${link}">${label}</a>${tournament ? "" : html` <span class="chip">matchmaking</span>`}</td>
           <td class="r">${fmt.number(e.matches)}</td>
           <td class="r nowrap">${record(e.won, e.lost)}</td>
           <td class="r">${cost(e.avg_cost)}</td>

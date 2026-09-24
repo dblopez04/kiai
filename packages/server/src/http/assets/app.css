@@ -208,6 +208,12 @@ tr.row-blue td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
 .game { display: grid; gap: 0.6rem; }
 .gamehead { display: flex; gap: 0.8rem; align-items: center; }
 .gamehead img { border-radius: 6px; object-fit: cover; }
+.game.excluded .gamehead img, .game.excluded .tablewrap { opacity: 0.55; }
+details.menu { position: relative; align-self: flex-start; }
+details.menu summary { list-style: none; padding: 0 0.5rem; border: 1px solid var(--line); border-radius: 6px; font-weight: 700; }
+details.menu summary::-webkit-details-marker { display: none; }
+details.menu form { position: absolute; right: 0; top: calc(100% + 0.3rem); z-index: 2; width: min(16rem, calc(100vw - 2rem)); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem; box-shadow: 0 4px 16px rgb(0 0 0 / 0.15); }
+details.menu form p { margin: 0.4rem 0 0; }
 .discovery { border-top: 1px solid var(--line); padding-top: 0.6rem; margin-top: 0.6rem; }
 .discovery p { margin: 0.3rem 0; }
 .records { display: grid; gap: 0.8rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); }

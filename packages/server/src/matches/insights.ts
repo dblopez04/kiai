@@ -378,7 +378,7 @@ export async function matchInsights(sql: Sql, playerId: number, f: InsightFilter
         count(*) filter (where others.n > 0)::int as mvp_of,
         count(*) filter (where tiebreaker and outcome > 0)::int as tiebreakers_won,
         count(*) filter (where tiebreaker and outcome < 0)::int as tiebreakers_lost,
-        count(distinct lower(acronym)) filter (where kind = 'tournament')::int as tournaments,
+        count(distinct lower(acronym)) filter (where kind in ('tournament', 'qualifiers'))::int as tournaments,
         min(played_at) as first_match
       from mine cross join lateral (
         select count(*)::int as n, max(p.match_cost) as best from match_players p where p.match_id = mine.id and p.user_id <> ${playerId}
@@ -419,7 +419,7 @@ export async function matchInsights(sql: Sql, playerId: number, f: InsightFilter
         (array_agg(id order by games_played >= ${RECORD_MIN_MAPS} desc, match_cost desc))[1] as best_match_id,
         min(played_at) as first_played, max(played_at) as last_played
       from mine where kind <> 'other'
-      group by case when kind = 'tournament' then lower(acronym) else kind end
+      group by case when kind in ('tournament', 'qualifiers') then lower(acronym) else kind end
       order by max(played_at) desc`,
     sql`${withGames}
       select mods, count(*)::int as maps,

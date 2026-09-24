@@ -20,7 +20,7 @@ import {
   tournamentFiltersToParams,
 } from "../matches/query.ts";
 import { clearFailed, enqueueMatches, queueOverview, retryFailed } from "../matches/queue.ts";
-import { setNotTournament, updateMatchSettings } from "../matches/store.ts";
+import { setGameExcluded, setNotTournament, updateMatchSettings } from "../matches/store.ts";
 import type { AppDeps } from "./app.ts";
 import { matchStatsPage } from "./insight-views.ts";
 import { matchesPage, matchPage, tournamentScoresPage } from "./match-views.ts";
@@ -155,7 +155,8 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
     const id = positiveId(c.req.param("id"))!;
     const form = await c.req.parseBody();
     const ok = await updateMatchSettings(sql, id, {
-      warmups: Math.trunc(bounded(form.warmups, 0, 50, 0)),
+      // Left empty: find them from the host.
+      warmups: typeof form.warmups === "string" && form.warmups.trim() !== "" ? Math.trunc(bounded(form.warmups, 0, 50, 0)) : null,
       skipLast: Math.trunc(bounded(form.skip_last, 0, 50, 0)),
       ezMultiplier: bounded(form.ez_multiplier, 0.1, 10, 1.8),
     });
@@ -170,6 +171,16 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
     const notTournament = form.not_tournament === "true";
     if (!(await setNotTournament(sql, id, notTournament))) return c.html(messagePage("Not found", "That match isn't in the database.", player), 404);
     return c.redirect(back(notTournament ? "No longer counted as a tournament." : "Counted as a tournament again.", `/matches/${id}`), 303);
+  });
+
+  /** `excluded=true` leaves one map out of the match costs and score line; `false` counts it again. */
+  app.post("/matches/:id{[0-9]+}/games/:game{[0-9]+}/excluded", async (c) => {
+    const id = positiveId(c.req.param("id"))!;
+    const gameId = positiveId(c.req.param("game"))!;
+    const form = await c.req.parseBody();
+    const excluded = form.excluded === "true";
+    if (!(await setGameExcluded(sql, id, gameId, excluded))) return c.html(messagePage("Not found", "That map isn't in this match.", player), 404);
+    return c.redirect(`/matches/${id}#game-${gameId}`, 303);
   });
 
   app.post("/matches/:id{[0-9]+}/refresh", async (c) => {

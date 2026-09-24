@@ -27,7 +27,7 @@ import { checked, filterForm, fmt, layout, mapCell, modChips, numberValue, pager
 type Html = ReturnType<typeof html>;
 
 const SOURCE_LABEL: Record<MatchSource, string> = { stable: "stable", lazer: "ranked play" };
-export const KIND_LABEL: Record<MatchKind, string> = { tournament: "tournament", romai: "ROMAI", etx: "ETX", omm: "o!mm", ranked: "ranked play", other: "other" };
+export const KIND_LABEL: Record<MatchKind, string> = { tournament: "tournament", qualifiers: "qualifiers", romai: "ROMAI", etx: "ETX", omm: "o!mm", ranked: "ranked play", other: "other" };
 
 /** Every type is ticked unless hidden; the `show=-` marker lets unticked boxes count (see `hiddenKinds`). */
 export function kindFieldset(hidden: readonly MatchKind[]): Html {
@@ -309,13 +309,22 @@ function playersTable(m: MatchDetail, playerId: number): Html {
     <details>
       <summary>Warmups and settings</summary>
       <form method="post" action="/matches/${m.id}/settings" class="row wrap">
-        <label>Warmups <input type="number" name="warmups" min="0" max="50" value="${m.warmups}" class="num"></label>
+        <label>Warmups <input type="number" name="warmups" min="0" max="50" value="${m.warmups ?? ""}" placeholder="auto" class="num"></label>
         <label>Skip last <input type="number" name="skip_last" min="0" max="50" value="${m.skip_last}" class="num"></label>
         <label>EZ multiplier <input type="number" name="ez_multiplier" min="0.1" max="10" step="0.01" value="${m.ez_multiplier}" class="num"></label>
         <button class="primary">Recalculate</button>
       </form>
+      <p class="muted small">${warmupNote(m)} To leave out one map anywhere in the match, open ⋯ on that map.</p>
     </details>
   </section>`;
+}
+
+function warmupNote(m: MatchDetail): string {
+  if (m.warmups !== null) return `The first ${m.warmups === 1 ? "map is a warmup" : `${m.warmups} maps are warmups`}; empty the box to find them from the host.`;
+  if (m.kind !== "tournament" && m.kind !== "qualifiers") return "With the warmup box empty, only tournament lobbies find warmups from the host.";
+  const found = m.games.filter((g) => g.warmup).map((g) => `#${g.position}`);
+  const rule = "maps played while a player held the host, as when a ref hands it to a captain to pick one (two at most)";
+  return found.length ? `Warmups found from the host: ${found.join(", ")} (${rule}).` : `No warmups found from the host (${rule}).`;
 }
 
 function mapTotals(red: number, blue: number): Html {
@@ -334,16 +343,32 @@ function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
   const b = g.beatmap;
   const status = !g.end_time
     ? html`<span class="chip">in progress or aborted</span>`
-    : !g.counted
-      ? html`<span class="chip">not counted</span>`
-      : g.winner
-        ? html`<span class="chip result side-${g.winner}">${g.winner} wins</span>`
-        : "";
+    : g.excluded
+      ? html`<span class="chip">left out</span>`
+      : g.warmup
+        ? html`<span class="chip" title="${m.warmups === null && g.host_id ? `Played while ${g.host_name ?? g.host_id} held the host` : ""}">warmup</span>`
+      : !g.counted
+        ? html`<span class="chip">not counted</span>`
+        : g.winner
+          ? html`<span class="chip result side-${g.winner}">${g.winner} wins</span>`
+          : "";
   const totals =
     g.red_score !== null && g.blue_score !== null && m.format !== "ffa"
       ? mapTotals(g.red_score, g.blue_score)
       : "";
-  return html`<section class="card game" aria-label="Map ${g.position}">
+  // Unfinished maps never count, so there's nothing to leave out.
+  const menu = g.end_time
+    ? html`<details class="menu">
+        <summary aria-label="Map ${g.position} options">⋯</summary>
+        <form method="post" action="/matches/${m.id}/games/${g.id}/excluded">
+          <input type="hidden" name="excluded" value="${g.excluded ? "false" : "true"}">
+          ${g.excluded
+            ? html`<button>Count this map again</button>`
+            : html`<button>Leave out of the match</button><p class="muted small">For a map that shouldn't count, like a tiebreaker played for fun. Match costs and the score line are worked out again without it.</p>`}
+        </form>
+      </details>`
+    : "";
+  return html`<section class="card game${g.excluded ? " excluded" : ""}" id="game-${g.id}" aria-label="Map ${g.position}">
     <div class="gamehead">
       ${b ? html`<img src="${b.list_url}" alt="" loading="lazy" width="80" height="60">` : ""}
       <div class="grow">
@@ -351,6 +376,7 @@ function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
         <div class="row wrap small">${b ? fmt.stars(b.difficulty_rating) : ""} ${g.mods.length ? modChips(g.mods.map((acronym) => ({ acronym }))) : ""} <span class="muted">${g.scoring_type ?? ""} ${g.team_type ?? ""}</span></div>
       </div>
       ${status || totals ? html`<div class="mapresult">${status}${totals}</div>` : ""}
+      ${menu}
     </div>
     ${g.scores.length
       ? html`<div class="tablewrap"><table class="scores compact">
@@ -385,7 +411,7 @@ export function matchPage(m: MatchDetail, player: Player, notice?: string): Html
       </div>
       ${headline(m)}
       <p class="muted">
-        ${m.kind === "ranked" ? "Lazer ranked play" : m.kind === "tournament" ? `Tournament ${m.acronym}` : m.kind === "other" ? `Stable multiplayer${m.not_tournament ? " (not a tournament)" : ""}` : `${KIND_LABEL[m.kind]} matchmaking`} ·
+        ${m.kind === "ranked" ? "Lazer ranked play" : m.kind === "tournament" ? `Tournament ${m.acronym}` : m.kind === "qualifiers" ? `Tournament ${m.acronym} qualifiers` : m.kind === "other" ? `Stable multiplayer${m.not_tournament ? " (not a tournament)" : ""}` : `${KIND_LABEL[m.kind]} matchmaking`} ·
         ${fmt.dateTime(m.start_time)}${duration !== null ? ` · ${duration} min` : ""}${m.end_time ? "" : " · in progress"} ·
         ${m.games_count} maps · <a href="${m.url}" target="_blank" rel="noopener noreferrer">View on osu! ↗</a>
       </p>
@@ -393,7 +419,7 @@ export function matchPage(m: MatchDetail, player: Player, notice?: string): Html
         <span class="muted">Fetched ${fmt.dateTime(m.fetched_at)} (${m.added_via})</span>
         <button>Fetch again</button>
       </form>
-      ${m.kind === "tournament" || (m.kind === "other" && m.not_tournament)
+      ${m.kind === "tournament" || m.kind === "qualifiers" || (m.kind === "other" && m.not_tournament)
         ? html`<form method="post" action="/matches/${m.id}/tournament" class="row wrap small">
             <input type="hidden" name="not_tournament" value="${m.not_tournament ? "false" : "true"}">
             ${m.not_tournament

@@ -39,6 +39,8 @@ export interface NormalizedGame {
   mods: string[];
   startTime: string | null;
   endTime: string | null;
+  /** The player holding the lobby host when the game started (stable), or null when nobody did. */
+  hostId: number | null;
   scores: NormalizedScore[];
 }
 
@@ -103,11 +105,17 @@ export function normalizeStableMatch(pages: readonly ApiMatch[]): NormalizedMatc
   const beatmaps: BeatmapRow[] = [];
   const participants = new Set<number>();
   const games = new Map<number, NormalizedGame>();
+  // Who holds the host. Refs make lobbies with `!mp make`, which have none, and hand it to a
+  // captain to pick a warmup; `!mp clearhost` is a host change to user 0.
+  let host: number | null = null;
 
   for (const page of pages) {
     for (const user of page.users ?? []) users.set(user.id, user);
     for (const event of page.events) {
       if (event.user_id) participants.add(event.user_id);
+      const type = event.detail?.type;
+      if (type === "host-changed") host = event.user_id || null;
+      else if ((type === "player-left" || type === "player-kicked") && event.user_id === host) host = null;
       const game = event.game;
       if (!game) continue;
       const beatmap = game.beatmap ? beatmapRow(game.beatmap as ApiBeatmap) : null;
@@ -133,6 +141,7 @@ export function normalizeStableMatch(pages: readonly ApiMatch[]): NormalizedMatc
         mods: modAcronyms(game.mods),
         startTime: iso(game.start_time),
         endTime: iso(game.end_time),
+        hostId: host,
         scores: scores.filter((s) => s.userId > 0),
       });
     }
@@ -194,6 +203,7 @@ export function normalizeRoom(pages: readonly ApiRoomEvents[]): NormalizedMatch 
         mods: modAcronyms(item.required_mods),
         startTime: iso(item.details?.started_at) ?? iso(item.created_at),
         endTime: iso(item.played_at),
+        hostId: null,
         scores: (item.scores ?? [])
           .filter((score) => num(score.user_id) > 0)
           .map((score): NormalizedScore => {
@@ -260,14 +270,27 @@ export function matchmakingBot(name: string): MatchmakingBot | null {
   return MATCHMAKING_NAMES.find(([, pattern]) => pattern.test(name))?.[0] ?? null;
 }
 
-/** What a match is: a tournament match, one matchmaking bot's lobby, a ranked play room, or (not filterable) any other lobby. */
-export const MATCH_KINDS = ["tournament", "romai", "etx", "omm", "ranked"] as const;
-export type MatchKind = (typeof MATCH_KINDS)[number] | "other";
+// A qualifier or tryout lobby's name ("ACR: Qualifiers Lobby 3", "ACR: (Tryouts) Lobby A"). Like
+// `matchmakingPattern`, it works in JavaScript and in Postgres (`~*`), which has no `\b`.
+export const QUALIFIERS_PATTERN = "(^|[^a-z0-9_])(qualifiers?|qualification|quals|tryouts?)(?![a-z0-9_])";
+const QUALIFIERS_NAME = new RegExp(QUALIFIERS_PATTERN, "i");
+
+/**
+ * What a match is: a tournament match, a tournament's qualifier lobby, one matchmaking bot's lobby,
+ * a ranked play room, or any other lobby (including tournament-style names marked as not a tournament).
+ */
+export const MATCH_KINDS = ["tournament", "qualifiers", "romai", "etx", "omm", "ranked", "other"] as const;
+export type MatchKind = (typeof MATCH_KINDS)[number];
+/** Kinds that belong to a tournament, counted under its acronym. */
+export const TOURNAMENT_KINDS: readonly MatchKind[] = ["tournament", "qualifiers"];
 
 /** `notTournament`: the player marked a tournament-style name as a casual lobby. */
 export function matchKind(match: { source: MatchSource; name: string; acronym: string | null; notTournament?: boolean }): MatchKind {
   if (match.source === "lazer") return "ranked";
-  return matchmakingBot(match.name) ?? (match.acronym !== null && !match.notTournament ? "tournament" : "other");
+  const bot = matchmakingBot(match.name);
+  if (bot) return bot;
+  if (match.acronym === null || match.notTournament) return "other";
+  return QUALIFIERS_NAME.test(match.name) ? "qualifiers" : "tournament";
 }
 
 /** Lobby names worth fetching during discovery: tournament-style names, or ones naming the player. */
