@@ -15,7 +15,7 @@ import {
   resolveUsers,
 } from "../src/matches/query.ts";
 import { enqueueMatches, queueOverview } from "../src/matches/queue.ts";
-import { fetchMatch, ingestMatch, setGameExcluded, setNotTournament, updateMatchSettings } from "../src/matches/store.ts";
+import { fetchMatch, ingestMatch, recomputeQualifierMatches, setGameExcluded, setNotTournament, updateMatchSettings } from "../src/matches/store.ts";
 import { createMatchStepper, type MatchWorkerDeps } from "../src/matches/worker.ts";
 import { createPpCalculator } from "../src/scores/pp.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
@@ -268,6 +268,31 @@ describe("saving matches", () => {
     const myScores = detail.games.flatMap((g) => g.scores.filter((s) => s.user_id === USER_ID));
     expect(myScores.every((s) => s.pp_source === "local" && s.pp! > 0)).toBe(true);
     expect(detail.players.find((p) => p.user_id === OPPONENT_A)!.username).toBe("RivalOne");
+  });
+
+  it("gives qualifier lobbies no result, even in team vs or with two players", async () => {
+    const teams = (await getMatchDetail(db.sql, USER_ID, await save(teamMatch(90010, { name: "TST 2026: Qualifiers Lobby 3" }))))!;
+    const pair = (await getMatchDetail(
+      db.sql,
+      USER_ID,
+      await save(stableMatch({ id: 90011, name: "TST 2026: (Qualifiers) Lobby 4", games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 1], [OPPONENT_A, 2]] }] })),
+    ))!;
+    for (const detail of [teams, pair]) {
+      expect(detail.kind).toBe("qualifiers");
+      expect(detail.format).toBe("ffa");
+      expect([detail.red_wins, detail.blue_wins, detail.result, detail.tiebreaker]).toEqual([null, null, null, false]);
+      expect(detail.games.every((g) => g.winner === null)).toBe(true);
+      expect(detail.players.every((p) => p.side === null && p.tiebreaker_bonus === 0)).toBe(true);
+      expect(detail.me!.match_cost).toBeGreaterThan(0);
+    }
+    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ won: 0, lost: 0 });
+    // Qualifiers saved before this rule lose their score line when migrated.
+    await db.sql`update matches set red_wins = 1, blue_wins = 0 where id = ${pair.id}`;
+    await recomputeQualifierMatches(db.sql);
+    expect((await getMatchDetail(db.sql, USER_ID, pair.id))!.result).toBeNull();
+    // Marked as a casual lobby, it's an ordinary team match again.
+    await setNotTournament(db.sql, teams.id, true);
+    expect((await getMatchDetail(db.sql, USER_ID, teams.id))!.result).toBe("won");
   });
 
   it("keeps the player's own profile when saving match players", async () => {
