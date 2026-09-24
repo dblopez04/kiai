@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { analyzeMatch, type CostGame } from "../src/matches/cost.ts";
 import { crawlLazer, crawlStable, encodeCursor, scanStableFrom } from "../src/matches/discovery.ts";
 import { parseMatchRefs } from "../src/matches/import.ts";
-import { isCandidateName, parseMatchName } from "../src/matches/normalize.ts";
+import { isCandidateName, matchmakingBot, parseMatchName } from "../src/matches/normalize.ts";
 import {
   getMatchDetail,
   listMatches,
@@ -126,6 +126,16 @@ describe("names and imports", () => {
     expect(parseMatchName("5WC: Team A VS. Team B")).toEqual({ acronym: "5WC", red: "Team A", blue: "Team B" });
     expect(parseMatchName("ACR: Qualifiers Lobby 3")).toEqual({ acronym: "ACR", red: null, blue: null });
     expect(parseMatchName("peppy's game")).toEqual({ acronym: null, red: null, blue: null });
+  });
+
+  it("recognizes matchmaking bot lobbies", () => {
+    expect(matchmakingBot("ROMAI: (tester) vs (RivalTwo)")).toBe("romai");
+    expect(matchmakingBot("etx: (tester) vs (RivalTwo)")).toBe("etx");
+    expect(matchmakingBot("o!mm Ranked: tester vs RivalTwo")).toBe("omm");
+    expect(matchmakingBot("O!MM: casual")).toBe("omm");
+    for (const name of ["ROMAIC: (A) vs (B)", "ETXC 2026: (A) vs (B)", "OWC 2025: (ETX) vs (Japan)", "peppy's o!mm lobby"]) {
+      expect(matchmakingBot(name)).toBeNull();
+    }
     expect(isCandidateName("4* auto host", "tester")).toBe(false);
     expect(isCandidateName("tester's lobby", "tester")).toBe(true);
   });
@@ -251,6 +261,38 @@ describe("searching matches", () => {
 
   it("summarizes the player's record", async () => {
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, played: 2, won: 1, lost: 1, tournaments: 3 });
+  });
+
+  it("hides tournaments, each matchmaking bot or ranked play, but never other lobbies", async () => {
+    const duel = (id: number, name: string) =>
+      stableMatch({ id, name, games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 500_000], [OPPONENT_B, 400_000]] }] });
+    await save(duel(4, "ROMAI: (tester) vs (RivalTwo)"));
+    await save(duel(5, "ETX: (tester) vs (RivalTwo)"));
+    await save(duel(6, "o!mm Ranked: tester vs RivalTwo"));
+    await save(duel(7, "tester's lobby"));
+    const all = (await listMatches(db.sql, USER_ID, parseMatchFilters(q()))).matches;
+    expect(Object.fromEntries(all.map((m) => [m.external_id, m.kind]))).toEqual({
+      1: "tournament", 2: "tournament", 3: "tournament", 4: "romai", 5: "etx", 6: "omm", 7: "other",
+    });
+    expect((await names({ hide: "tournament" })).sort()).toEqual([4, 5, 6, 7]);
+    expect((await names({ hide: "romai" })).sort()).toEqual([1, 2, 3, 5, 6, 7]);
+    expect((await names({ hide: "romai,etx,omm" })).sort()).toEqual([1, 2, 3, 7]);
+    // `other` has no box, so it can't be hidden, like any unknown kind.
+    expect((await names({ hide: "other,bogus" })).length).toBe(7);
+    // The form sends the ticked boxes, and a marker so unticking all of them still counts.
+    const form = (...shown: string[]) => new URLSearchParams([["show", "-"], ...shown.map((kind): [string, string] => ["show", kind])]);
+    const shown = async (...kinds: string[]) =>
+      (await listMatches(db.sql, USER_ID, parseMatchFilters(form(...kinds)))).matches.map((m) => m.external_id).sort();
+    expect(await shown("tournament", "romai", "etx", "omm", "ranked")).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(await shown("tournament", "ranked")).toEqual([1, 2, 3, 7]);
+    expect(await shown()).toEqual([7]);
+    expect(parseMatchFilters(form("tournament", "ranked")).hide).toEqual(["romai", "etx", "omm"]);
+    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 7, tournaments: 3 });
+    const scores = async (params: Record<string, string>) =>
+      (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
+    expect(await scores({})).toBe(11);
+    expect(await scores({ hide: "romai,etx,omm" })).toBe(8);
+    expect(await scores({ hide: "tournament" })).toBe(4);
   });
 
   it("searches tournament scores with the score library's filters", async () => {
