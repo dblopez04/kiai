@@ -1,6 +1,8 @@
+import os from "node:os";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 import { createApp } from "../src/http/app.ts";
+import { mediaPaths } from "../src/media.ts";
 import { resolvePlayer, type Player } from "../src/player.ts";
 import { runImport } from "../src/scores/importer.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
@@ -33,7 +35,7 @@ beforeEach(async () => {
   await db.sql`truncate osu_users, beatmaps, scores, user_played_maps, sync_runs, score_archives cascade`;
   osu = fakeOsu();
   player = await resolvePlayer(db.sql, osu, "tester");
-  app = createApp({ sql: db.sql, osu, player, config: { RECENT_WINDOW_HOURS: 24, PRIVATE_HOSTS: ["scores.home.example"] } });
+  app = createApp({ sql: db.sql, osu, player, media: mediaPaths(os.tmpdir()), config: { RECENT_WINDOW_HOURS: 24, PRIVATE_HOSTS: ["scores.home.example"] } });
 });
 
 async function seedScores() {

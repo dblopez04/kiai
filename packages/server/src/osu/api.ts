@@ -34,6 +34,8 @@ export interface OsuClient {
   getScore(scoreId: number): Promise<ApiScore | null>;
   /** The .osu file. Null if osu! doesn't have it. */
   getBeatmapFile(beatmapId: number): Promise<string | null>;
+  /** The beatmap whose current .osu file has this MD5. Null for unsubmitted, edited or outdated versions. */
+  lookupBeatmap(checksum: string): Promise<ApiBeatmap | null>;
 }
 
 export interface OsuApiOptions {
@@ -140,6 +142,10 @@ export class OsuApi implements OsuClient {
       throw new OsuApiError(`Beatmap ${beatmapId} download was not a beatmap file.`, response.status);
     }
     return text;
+  }
+
+  async lookupBeatmap(checksum: string): Promise<ApiBeatmap | null> {
+    return this.#getJson<ApiBeatmap>("/api/v2/beatmaps/lookup", { checksum }, { nullOn404: true });
   }
 
   #url(path: string, query: Query = {}): URL {

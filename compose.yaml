@@ -1,6 +1,22 @@
 # Homelab stack. Setup: cp .env.example .env, fill it in, then `docker compose up -d`.
+# Add a render worker with a profile: `docker compose --profile nvidia up -d` (or --profile cpu).
 # Caddy and cloudflared join this file with the public replay pages (see docs/architecture.md).
 name: kiai
+
+# The render worker: danser under Xvfb, sharing the database and the data volume with the server.
+x-render: &render
+  build:
+    context: .
+    dockerfile: render.Dockerfile
+  # danser only ships x86_64 builds.
+  platform: linux/amd64
+  restart: unless-stopped
+  env_file: .env
+  depends_on:
+    postgres:
+      condition: service_healthy
+  volumes:
+    - data:/app/data
 
 services:
   postgres:
@@ -31,10 +47,35 @@ services:
     # to use it from your LAN, change it to "<lan-ip>:8080:8080" (or reach it over Tailscale/SSH).
     # Never route it through Caddy or cloudflared: only the replay pages (a separate port, later)
     # are public, and the server refuses score requests that arrive through a tunnel anyway.
+    # `kiai render` on the gaming PC uploads here too, so that PC must be able to reach this port.
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - data:/app/data
+
+  # Needs the NVIDIA driver and nvidia-container-toolkit on the host. danser draws with Mesa under
+  # Xvfb; its ffmpeg encodes on the GPU (RENDER_ENCODER, default h264_nvenc).
+  render:
+    <<: *render
+    profiles: ["nvidia"]
+    environment:
+      DATABASE_URL: postgres://kiai:${POSTGRES_PASSWORD}@postgres:5432/kiai
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # No GPU: software x264. Much slower, but works on any x86_64 host.
+  render-cpu:
+    <<: *render
+    profiles: ["cpu"]
+    environment:
+      DATABASE_URL: postgres://kiai:${POSTGRES_PASSWORD}@postgres:5432/kiai
+      RENDER_ENCODER: libx264
 
 volumes:
   pgdata:

@@ -6,7 +6,8 @@ Tools for osu! players on Linux who run a homelab.
 |---|---|
 | osu-winello presets with app-launcher shortcuts | **done** (client) |
 | Private score library: auto-synced scores, search/filter, local PP, CSV exports | **done** (server) |
-| One-click replay rendering with danser, Discord DM with the link | planned: phases 3–4 |
+| Replay rendering with danser on the homelab GPU: `kiai render <file.osr>` | **done** (client + server) |
+| Automatic uploads from the replay watcher, Discord DM with the link | planned: phase 4 |
 | Render presets chosen by rules on the replay (mods, AR, server, ...) | planned: phase 5 |
 | Public replay pages and gallery (Caddy + Cloudflare Tunnel) | planned: phases 4 and 6; the gallery reuses the score library's filters |
 | Map skillset checker | later, once it settles in its own repo |
@@ -15,7 +16,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design and roadmap
 
 ## Client
 
-The client runs on the PC you play on. It's a single static Go binary (~3 MB) with no
+The client runs on the PC you play on. It's a single static Go binary (~7 MB) with no
 runtime to install. It needs [osu-winello](https://github.com/NelloKudo/osu-winello).
 
 ### Install
@@ -56,6 +57,29 @@ can be recorded first.
 **Official-server presets** run plain `osu-wine`. In that case osu-winello applies
 `POST_LAUNCH_ARGS` from its own config, so if you put a `-devserver` there, "bancho" will
 actually connect to that server. Use presets for server selection instead.
+
+### Rendering replays
+
+`kiai render` uploads a replay to your kiai server, which renders it with danser, and waits for
+the video. Point the client at the server once, with the server's `UPLOAD_TOKEN`:
+
+```sh
+kiai server set http://homelab:8080 --token <UPLOAD_TOKEN>
+kiai render ~/.local/share/osu-wine/osu!/Replays/some-replay.osr
+# Uploaded replay k3v9x2mq7a: Artist - Song [Insane], S by you
+# Rendering... 40%
+# Rendered: http://homelab:8080/replays/k3v9x2mq7a
+```
+
+- A .osr doesn't record which server the play was set on. kiai assumes the server of the preset
+  you launched last. Override it with `--devserver <host>` or `--official`.
+- The server downloads the map from a mirror. For maps no mirror has (unsubmitted, edited, or
+  updated since you played), it asks for the map, and kiai uploads it from your osu! Songs folder,
+  found through osu-winello, without video backgrounds. Pass `--songs <dir>` or `--osz <file>` to
+  choose it yourself.
+- `--no-wait` returns straight after the upload. Uploading the same file again returns the
+  existing replay.
+- `KIAI_SERVER_URL` and `KIAI_UPLOAD_TOKEN` override the saved server for one run.
 
 ## Server
 
@@ -118,6 +142,41 @@ Jobs run one at a time, since they share osu!'s rate limit (one request per 1.1 
 holds a lease it renews every 15 s. If a worker dies, its job is taken over after five
 minutes.
 
+### Rendering
+
+The render worker runs danser 0.11 in its own x86_64 container (`render.Dockerfile`), sharing the
+database and the `data` volume with the server. Uploads arrive on the private port, so the gaming
+PC must be able to reach it: publish 8080 on your LAN IP or use Tailscale (see Install above).
+
+1. Set `UPLOAD_TOKEN` in `.env` (`openssl rand -hex 24`).
+2. Start a worker with the profile for your hardware:
+   - NVIDIA: `docker compose --profile nvidia up -d`. This needs the NVIDIA driver and
+     [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+     on the host. It encodes with NVENC (`h264_nvenc`; Pascal cards like the GTX 1050 Ti have no AV1).
+   - No GPU: `docker compose --profile cpu up -d` encodes with x264 on the CPU.
+3. On the gaming PC: `kiai server set http://<homelab>:8080 --token <UPLOAD_TOKEN>`, then
+   `kiai render <file.osr>`.
+
+How a render goes:
+
+- **Map:** the replay names its map by the .osu file's MD5. The worker asks osu! which set that
+  is, then downloads the `.osz` from the first of `MAP_MIRRORS` that has it. If the mirror's copy
+  is outdated, it uses the current `.osu` from osu!. If osu! doesn't know the MD5, the render waits
+  in *needs the beatmap* until the client uploads the set, which re-queues it. Maps are kept in
+  `data/songs` and reused.
+- **Render:** `danser-cli` under `xvfb-run`, with base settings in `<danser>/settings/kiai.json`
+  (Songs, Skins and output folders, encoder) and the preset as a `-sPatch`. There is one preset
+  for now: 1080p60 with danser's default skin. Videos land in `data/videos`.
+- **Score library:** each replay from the official servers is linked to its play in the library,
+  by stable's online score id, or by map, player name, combo, hit counts and score. Replays uploaded
+  before their play is synced get linked after the next sync.
+- **Queue:** renders run one at a time per worker (`RENDER_CONCURRENCY`). Workers lease jobs like
+  sync jobs do. A render whose worker dies goes back to the queue, and fails after three such tries.
+  A render still running after `RENDER_TIMEOUT_MINUTES` is stopped.
+
+Rendered replays are listed at <http://localhost:8080/replays> (private, like the score library),
+where you can watch or download them and render again. Public replay pages come in phase 4.
+
 ### Commands
 
 ```sh
@@ -125,11 +184,12 @@ docker compose exec server node packages/server/src/main.ts help   # or `npm run
 server sync --mode history         # queue a job (recent, history, refresh; reset needs --confirm RESET)
 server export --out scores.csv
 server worker --once               # process one queued job and exit
+server render-worker [--once]      # the render worker (what the render containers run)
 ```
 
 ### HTTP API
 
-Same privacy rules as the pages: private hostnames only, no authentication.
+Same privacy rules as the pages: private hostnames only. Uploads also need `UPLOAD_TOKEN`.
 
 | Endpoint | |
 |---|---|
@@ -141,6 +201,11 @@ Same privacy rules as the pages: private hostnames only, no authentication.
 | `GET /api/sync` | Recent jobs and their progress |
 | `POST /api/sync` | `{"mode": "recent" \| "history" \| "refresh"}` queues a job |
 | `GET /api/player` | The player's profile |
+| `POST /api/replays?devserver=<host>` | Upload a .osr (raw body, `Authorization: Bearer <UPLOAD_TOKEN>`). Queues a render; returns the replay. `devserver` is omitted for the official servers |
+| `GET /api/replays`, `GET /api/replays/:id` | Replays with their latest render: `queued`, `running` (with `progress`), `needs_map`, `success` (with `video_url`) or `failed` (with `error`) |
+| `PUT /api/replays/:id/beatmapset` | Upload the .osz a replay was played on (raw body, bearer token). Refused if it lacks that exact difficulty |
+| `POST /api/replays/:id/render` | Render again |
+| `GET /replays/:id/video` | The rendered mp4, with byte ranges |
 
 ## Development
 

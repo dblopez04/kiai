@@ -35,6 +35,8 @@ export interface ApiBeatmap {
   count_spinners?: number;
   max_combo?: number;
   last_updated?: string | null;
+  /** MD5 of the current .osu file. */
+  checksum?: string | null;
   beatmapset?: ApiBeatmapset;
 }
 

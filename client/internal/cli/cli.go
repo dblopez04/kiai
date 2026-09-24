@@ -35,6 +35,15 @@ Usage:
   kiai preset sync                   Rewrite every launcher entry from the config
                                      (run after moving the kiai binary)
   kiai launch <name>                 Start osu! with a preset (the launcher entries run this)
+  kiai server set <url> [--token <UPLOAD_TOKEN>]
+                                     Point kiai at your kiai server (e.g. http://homelab:8080)
+  kiai server show                   Show the configured server
+  kiai render <file.osr> [options]   Upload a replay, render it on the server, and wait for the video
+      --devserver <host>    Server the play was set on (default: the last preset launched)
+      --official            It was set on the official servers
+      --osz <file>          Also upload the beatmap set it was played on
+      --songs <dir>         osu! Songs folder, searched when the server can't download the map
+      --no-wait             Upload and return without waiting for the render
   kiai help | --help | --version
 
 Example:
@@ -52,6 +61,8 @@ type IO struct {
 	Now     func() time.Time
 	// The running binary, for launcher entries (os.Executable in production).
 	Executable func() (string, error)
+	// Waits between render status checks; nil means time.Sleep.
+	Sleep func(time.Duration)
 }
 
 func DefaultIO() IO {
@@ -84,6 +95,10 @@ func dispatch(args []string, io IO) (int, error) {
 		return 0, presetCommand(args[1:], io)
 	case "launch":
 		return launchCommand(args[1:], io)
+	case "server":
+		return 0, serverCommand(args[1:], io)
+	case "render":
+		return renderCommand(args[1:], io)
 	default:
 		return 1, fmt.Errorf("Unknown command %q. Run \"kiai help\" for usage.", args[0])
 	}

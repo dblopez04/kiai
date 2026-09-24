@@ -59,6 +59,8 @@ export interface FakeOsu extends OsuClient {
   scoresOnMap: Map<number, ApiScore[]>;
   liveScores: Map<number, ApiScore>;
   files: Map<number, string>;
+  /** Beatmaps by .osu MD5, for lookupBeatmap. */
+  checksums: Map<string, ApiBeatmap>;
   calls: string[];
   /** Throw from a method, once, to simulate an outage. */
   failOnce: Partial<Record<keyof OsuClient, (...args: unknown[]) => boolean>>;
@@ -74,6 +76,7 @@ export function fakeOsu(): FakeOsu {
     scoresOnMap: new Map(),
     liveScores: new Map(),
     files: new Map(),
+    checksums: new Map(),
     calls: [],
     failOnce: {},
 
@@ -109,6 +112,11 @@ export function fakeOsu(): FakeOsu {
       fake.calls.push(`getBeatmapFile ${beatmapId}`);
       check("getBeatmapFile", beatmapId);
       return fake.files.get(beatmapId) ?? null;
+    },
+    async lookupBeatmap(checksum) {
+      fake.calls.push(`lookupBeatmap ${checksum}`);
+      check("lookupBeatmap", checksum);
+      return fake.checksums.get(checksum) ?? null;
     },
   };
 
