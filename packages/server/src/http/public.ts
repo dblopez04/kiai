@@ -87,7 +87,13 @@ ${r.beatmap?.cover_url ? html`<meta property="og:image" content="${r.beatmap.cov
 <meta property="og:video:type" content="video/mp4">
 <meta property="og:video:width" content="${r.render?.video_width ?? 1920}">
 <meta property="og:video:height" content="${r.render?.video_height ?? 1080}">
-<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:card" content="player">
+<meta name="twitter:title" content="${title}">
+<meta name="twitter:player" content="${video}">
+<meta name="twitter:player:stream" content="${video}">
+<meta name="twitter:player:stream:content_type" content="video/mp4">
+<meta name="twitter:player:width" content="${r.render?.video_width ?? 1920}">
+<meta name="twitter:player:height" content="${r.render?.video_height ?? 1080}">
 <meta name="theme-color" content="#ff66aa">`;
   return layout(
     title,

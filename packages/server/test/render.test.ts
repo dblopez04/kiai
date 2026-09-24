@@ -6,7 +6,7 @@ import type { Hono } from "hono";
 import { createApp } from "../src/http/app.ts";
 import { ensureMediaDirs, mediaPaths, type MediaPaths } from "../src/media.ts";
 import { resolvePlayer, type Player } from "../src/player.ts";
-import { danserRenderer, type Renderer } from "../src/render/danser.ts";
+import { danserCommand, danserRenderer, type Renderer } from "../src/render/danser.ts";
 import { ensureBeatmap, installOsz, parseOsuMetadata } from "../src/render/maps.ts";
 import { claimRender, enqueueRender, MAX_RENDER_ATTEMPTS } from "../src/render/queue.ts";
 import { runNextRender, type RenderDeps } from "../src/render/worker.ts";
@@ -18,7 +18,7 @@ import { beatmap, fakeOsu, score, USER_ID, type FakeOsu } from "./helpers/fake-o
 import { buildOsr, buildZip, md5Of, osuText } from "./helpers/replay-files.ts";
 
 const TOKEN = "test-upload-token-0123456789";
-const PRESET = { name: "default", description: "", skin: "default", patch: { Recording: { FPS: 60 } } };
+const PRESET = { name: "default", description: "", skin: "default", patch: { Recording: { FPS: 60 } }, skipIntro: false };
 const ORIGIN = "http://localhost:8080";
 
 let db: TestDb;
@@ -282,12 +282,13 @@ describe("render queue and worker", () => {
 
 describe("danser", () => {
   // Stands in for danser-cli: records its arguments, prints progress, writes <out>.mp4 unless told not to.
-  async function fakeDanser(mode: "ok" | "missing-map"): Promise<string> {
+  async function fakeDanser(mode: "ok" | "missing-map", glRenderer = "NVIDIA GeForce GTX 1050 Ti/PCIe/SSE2"): Promise<string> {
     const script = path.join(dir, "fake-danser");
     await fs.writeFile(
       script,
       `#!/bin/sh
 printf '%s\\n' "$@" > "${dir}/args"
+echo "2026/09/23 12:00:00 GL Renderer:   ${glRenderer}"
 out=""
 while [ $# -gt 0 ]; do [ "$1" = "-out" ] && out="$2"; shift; done
 ${mode === "ok"
@@ -302,7 +303,7 @@ exit 0
 
   it("runs danser-cli with kiai's settings and the preset, and reports progress", async () => {
     const danserDir = path.join(dir, "danser");
-    const renderer = danserRenderer({ dir: danserDir, paths: media, encoder: "libx264", xvfb: false, timeoutMs: 30_000, command: await fakeDanser("ok") });
+    const renderer = danserRenderer({ dir: danserDir, paths: media, encoder: "libx264", xvfb: false, gl: "software", timeoutMs: 30_000, command: await fakeDanser("ok") });
     const progress: number[] = [];
     const video = await renderer.render({ replayFile: "/r.osr", outputName: "abc-1", preset: PRESET, onProgress: (p) => progress.push(p) }, new AbortController().signal);
 
@@ -311,15 +312,34 @@ exit 0
     const args = (await fs.readFile(path.join(dir, "args"), "utf8")).trim().split("\n");
     expect(args.slice(0, 7)).toEqual(["-replay", "/r.osr", "-record", "-out", "abc-1", "-settings", "kiai"]);
     expect(JSON.parse(args[args.indexOf("-sPatch") + 1]!)).toEqual(PRESET.patch);
+    expect(args).not.toContain("-skip");
     const settings = JSON.parse(await fs.readFile(path.join(danserDir, "settings", "kiai.json"), "utf8"));
     expect(settings).toMatchObject({ General: { OsuSongsDir: media.songs }, Recording: { Encoder: "libx264", OutputDir: media.videos } });
   });
 
   it("fails with danser's own words when no video comes out", async () => {
-    const renderer = danserRenderer({ dir: path.join(dir, "danser"), paths: media, encoder: "libx264", xvfb: false, timeoutMs: 30_000, command: await fakeDanser("missing-map") });
+    const renderer = danserRenderer({ dir: path.join(dir, "danser"), paths: media, encoder: "libx264", xvfb: false, gl: "software", timeoutMs: 30_000, command: await fakeDanser("missing-map") });
     await expect(renderer.render({ replayFile: "/r.osr", outputName: "x", preset: PRESET, onProgress: () => {} }, new AbortController().signal)).rejects.toThrow(
       /couldn't find the beatmap[\s\S]*Beatmap not found/,
     );
+  });
+
+  it("draws through VirtualGL on the GPU, skips the intro, and says when GL is on the CPU", async () => {
+    expect(danserCommand({ xvfb: true, gl: "gpu" }, "/opt/danser/danser-cli", ["-record"])).toEqual([
+      "xvfb-run", "-a", "-s", "-screen 0 1920x1080x24", "vglrun", "-d", "egl", "/opt/danser/danser-cli", "-record",
+    ]);
+    expect(danserCommand({ xvfb: false, gl: "software" }, "danser-cli", ["-record"])).toEqual(["danser-cli", "-record"]);
+
+    const logs: string[] = [];
+    const options = { dir: path.join(dir, "danser"), paths: media, encoder: "libx264", xvfb: false, gl: "software", timeoutMs: 30_000, log: (m: string) => logs.push(m) } as const;
+    const input = { replayFile: "/r.osr", outputName: "gl", preset: { ...PRESET, skipIntro: true }, onProgress: () => {} };
+    await danserRenderer({ ...options, command: await fakeDanser("ok", "llvmpipe (LLVM 15.0.6, 256 bits)") }).render(input, new AbortController().signal);
+    expect((await fs.readFile(path.join(dir, "args"), "utf8")).split("\n")).toContain("-skip");
+    expect(logs).toEqual([expect.stringMatching(/^danser is drawing with llvmpipe \(LLVM 15\.0\.6, 256 bits\), on the CPU.*RENDER_GL=gpu/)]);
+
+    logs.length = 0;
+    await danserRenderer({ ...options, command: await fakeDanser("ok") }).render(input, new AbortController().signal);
+    expect(logs).toEqual(["danser is drawing with NVIDIA GeForce GTX 1050 Ti/PCIe/SSE2"]);
   });
 });
 

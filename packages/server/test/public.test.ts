@@ -48,11 +48,18 @@ const fakeRenderer: Renderer = {
   },
 };
 
-type Sent = { url: string; body: Record<string, unknown> };
-function discordFetch(sent: Sent[]): typeof fetch {
+type Sent = { url: string; body: Record<string, unknown>; file?: { name: string; size: number; type: string } };
+/** Fakes Discord; `maxUpload` is the largest attachment it accepts. */
+function discordFetch(sent: Sent[], maxUpload = Infinity): typeof fetch {
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
-    sent.push({ url, body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+    if (init?.body instanceof FormData) {
+      const file = init.body.get("files[0]") as File;
+      sent.push({ url, body: JSON.parse(String(init.body.get("payload_json"))) as Record<string, unknown>, file: { name: file.name, size: file.size, type: file.type } });
+      if (file.size > maxUpload) return Response.json({ message: "Request entity too large", code: 40005 }, { status: 413 });
+    } else {
+      sent.push({ url, body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+    }
     if (url.endsWith("/users/@me/channels")) return Response.json({ id: "555" });
     return Response.json({ id: "1" });
   }) as typeof fetch;
@@ -99,10 +106,13 @@ describe("Discord", () => {
     const id = await renderedReplay(notifier);
     expect(sent.map((s) => s.url)).toEqual(["https://discord.com/api/v10/users/@me/channels", "https://discord.com/api/v10/channels/555/messages"]);
     expect(sent[0]!.body).toEqual({ recipient_id: "123456789012345678" });
-    const message = sent[1]!.body as { content: string; embeds: { title: string; url: string; description: string }[] };
-    expect(message.content).toBe(`https://replays.example.com/r/${id}`);
-    expect(message.embeds[0]).toMatchObject({ title: "kiai - Public Song [Hard]", url: `https://replays.example.com/r/${id}` });
-    expect(message.embeds[0]!.description).toMatch(/^S · 96\.67% · 40x · \d+pp\* · DT 1\.5×$/);
+    // No embed of its own: Discord only unfurls the link (into the video) when a message has none.
+    const message = sent[1]!.body as { content: string; embeds?: unknown };
+    expect(message.embeds).toBeUndefined();
+    const lines = message.content.split("\n");
+    expect(lines[0]).toBe("**kiai - Public Song [Hard]**");
+    expect(lines[1]).toMatch(/^S · 96\.67% · 40x · \d+pp\\\* · DT 1\.5× · tester$/);
+    expect(lines.at(-1)).toBe(`https://replays.example.com/r/${id}`);
 
     // Running the notification step again for the same job sends nothing.
     await db.sql`update render_jobs set status = 'queued'`;
@@ -121,6 +131,33 @@ describe("Discord", () => {
     // Without PUBLIC_URL there's nothing to link.
     expect(renderedMessage((await getReplay(db.sql, id))!, undefined).content).toContain("Set PUBLIC_URL");
   });
+
+  it("uploads videos small enough to play in Discord as they are, and links bigger ones", async () => {
+    const sent: Sent[] = [];
+    const webhookUrl = "https://discord.com/api/webhooks/1/abc";
+    const notifier = discordNotifier({ webhookUrl, publicUrl: "https://replays.example.com", attachMaxBytes: 8 * 1024 * 1024, fetch: discordFetch(sent) });
+    const id = await renderedReplay(notifier);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.file).toEqual({ name: `${id}.mp4`, size: 4096, type: "video/mp4" });
+    expect(sent[0]!.body).toMatchObject({ attachments: [{ id: 0, filename: `${id}.mp4` }] });
+    // The link is still there, wrapped so it doesn't unfurl into a second video.
+    expect(String(sent[0]!.body.content).split("\n").at(-1)).toBe(`<https://replays.example.com/r/${id}>`);
+
+    // Over the limit: just the link.
+    sent.length = 0;
+    const replay = (await getReplay(db.sql, id))!;
+    const video = { file: path.join(media.videos, "big.mp4"), bytes: 9 * 1024 * 1024 };
+    await discordNotifier({ webhookUrl, publicUrl: "https://replays.example.com", attachMaxBytes: 8 * 1024 * 1024, fetch: discordFetch(sent) })!.rendered(replay, video);
+    expect(sent.map((s) => s.file)).toEqual([undefined]);
+    expect(String(sent[0]!.body.content).split("\n").at(-1)).toBe(`https://replays.example.com/r/${id}`);
+
+    // Discord refuses the upload (an unboosted server's limit is lower): it falls back to the link.
+    sent.length = 0;
+    const small = { file: path.join(media.videos, (await fs.readdir(media.videos))[0]!), bytes: 4096 };
+    await discordNotifier({ webhookUrl, publicUrl: "https://replays.example.com", attachMaxBytes: 8 * 1024 * 1024, fetch: discordFetch(sent, 1024) })!.rendered(replay, small);
+    expect(sent.map((s) => Boolean(s.file))).toEqual([true, false]);
+    expect(String(sent[1]!.body.content)).toContain(`https://replays.example.com/r/${id}`);
+  });
 });
 
 describe("public replay app", () => {
@@ -133,6 +170,9 @@ describe("public replay app", () => {
     const body = await page.text();
     expect(body).toContain(`<meta property="og:video" content="https://replays.example.com/r/${id}/video.mp4?v=`);
     expect(body).toContain('<meta property="og:title" content="kiai - Public Song [Hard]">');
+    // "player", not "summary_large_image", or Discord shows a picture instead of the video.
+    expect(body).toContain('<meta name="twitter:card" content="player">');
+    expect(body).toContain(`<meta name="twitter:player:stream" content="https://replays.example.com/r/${id}/video.mp4?v=`);
     expect(page.headers.get("content-security-policy")).toContain("default-src 'none'");
     expect(await (await app().request("/")).text()).toContain(`/r/${id}`);
 

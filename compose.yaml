@@ -96,14 +96,17 @@ services:
     depends_on:
       - caddy
 
-  # Needs the NVIDIA driver and nvidia-container-toolkit on the host. danser draws with Mesa under
-  # Xvfb; its ffmpeg encodes on the GPU (RENDER_ENCODER, default h264_nvenc).
+  # Needs the NVIDIA driver and nvidia-container-toolkit on the host. danser draws on the GPU
+  # through VirtualGL (RENDER_GL=gpu, which needs the "graphics" capability for NVIDIA's OpenGL/EGL
+  # libraries) and its ffmpeg encodes there too ("video"; RENDER_ENCODER, default h264_nvenc).
+  # The worker's log says which GPU danser drew with on every render.
   render:
     <<: *render
     profiles: ["nvidia"]
     environment:
       DATABASE_URL: postgres://kiai:${POSTGRES_PASSWORD}@postgres:5432/kiai
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video,graphics
+      RENDER_GL: gpu
     deploy:
       resources:
         reservations:
@@ -112,13 +115,14 @@ services:
               count: 1
               capabilities: [gpu]
 
-  # No GPU: software x264. Much slower, but works on any x86_64 host.
+  # No GPU: Mesa draws on the CPU and x264 encodes there. Much slower, but works on any x86_64 host.
   render-cpu:
     <<: *render
     profiles: ["cpu"]
     environment:
       DATABASE_URL: postgres://kiai:${POSTGRES_PASSWORD}@postgres:5432/kiai
       RENDER_ENCODER: libx264
+      RENDER_GL: software
 
 volumes:
   pgdata:

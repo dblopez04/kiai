@@ -17,6 +17,8 @@ export interface RenderPreset {
   skin: string;
   /** Merged over the base settings; keys as in danser 0.11's settings/default.json. */
   patch: Record<string, unknown>;
+  /** Start at the first hit object (danser's -skip) rather than rendering the lead-in. */
+  skipIntro: boolean;
 }
 
 export const DEFAULT_PRESET_NAME = "default";
@@ -24,25 +26,30 @@ export const BUILTIN_SKIN = "default";
 const PRESET_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const SKIN_NAME = /^[A-Za-z0-9][\w .()[\]+-]{0,63}$/;
 const MAX_PATCH_BYTES = 64 * 1024;
+/** Taken by the editor's routes (/render/presets/new). */
+const RESERVED_NAMES = new Set(["new"]);
 
 // ---------- presets ----------
 
-const toPreset = (row: { name: string; description: string; skin: string; patch: unknown }): RenderPreset => ({
+type PresetRow = { name: string; description: string; skin: string; patch: unknown; skip_intro: boolean };
+
+const toPreset = (row: PresetRow): RenderPreset => ({
   name: row.name,
   description: row.description,
   skin: row.skin,
   patch: (row.patch ?? {}) as Record<string, unknown>,
+  skipIntro: row.skip_intro,
 });
 
 export async function listPresets(sql: Sql): Promise<RenderPreset[]> {
-  const rows = await sql<{ name: string; description: string; skin: string; patch: unknown }[]>`
-    select name, description, skin, patch from render_presets order by name = ${DEFAULT_PRESET_NAME} desc, name`;
+  const rows = await sql<PresetRow[]>`
+    select name, description, skin, patch, skip_intro from render_presets order by name = ${DEFAULT_PRESET_NAME} desc, name`;
   return rows.map(toPreset);
 }
 
 export async function getPreset(sql: Sql, name: string): Promise<RenderPreset | null> {
-  const [row] = await sql<{ name: string; description: string; skin: string; patch: unknown }[]>`
-    select name, description, skin, patch from render_presets where name = ${name}`;
+  const [row] = await sql<PresetRow[]>`
+    select name, description, skin, patch, skip_intro from render_presets where name = ${name}`;
   return row ? toPreset(row) : null;
 }
 
@@ -71,21 +78,25 @@ export function parsePatch(text: string): Record<string, unknown> {
 export async function savePreset(
   sql: Sql,
   paths: MediaPaths,
-  input: { name: string; description: string; skin: string; patch: string },
+  /** `patch` is JSON text or an object; either way it's checked with parsePatch. Leaving out `skipIntro` keeps it (on for new presets). */
+  input: { name: string; description: string; skin: string; patch: string | Record<string, unknown>; skipIntro?: boolean | undefined },
   options: { create: boolean },
 ): Promise<void> {
   const name = input.name.trim().toLowerCase();
   if (!PRESET_NAME.test(name)) throw new UserError("Preset names are lowercase letters, digits, - and _, up to 32 characters.");
+  if (options.create && RESERVED_NAMES.has(name)) throw new UserError(`"${name}" can't be a preset name.`);
   const skin = input.skin.trim() || BUILTIN_SKIN;
   if (skin !== BUILTIN_SKIN && !(await listSkins(paths)).includes(skin)) throw new UserError(`There's no skin named "${skin}". Upload it first.`);
-  const patch = parsePatch(input.patch);
-  const values = { name, description: input.description.trim().slice(0, 500), skin, patch: sqlJson(sql, patch) };
+  const patch = parsePatch(typeof input.patch === "string" ? input.patch : JSON.stringify(input.patch));
+  const skipIntro = input.skipIntro ?? null;
+  const values = { name, description: input.description.trim().slice(0, 500), skin, patch: sqlJson(sql, patch), skip_intro: skipIntro ?? true };
   if (options.create) {
     const [created] = await sql`insert into render_presets ${sql(values)} on conflict (name) do nothing returning name`;
     if (!created) throw new UserError(`A preset named "${name}" already exists.`);
   } else {
     const [updated] = await sql`
-      update render_presets set description = ${values.description}, skin = ${skin}, patch = ${values.patch}, updated_at = now()
+      update render_presets set description = ${values.description}, skin = ${skin}, patch = ${values.patch},
+        skip_intro = coalesce(${skipIntro}::boolean, skip_intro), updated_at = now()
       where name = ${name} returning name`;
     if (!updated) throw new UserError(`There's no preset named "${name}".`);
   }

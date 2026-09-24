@@ -59,6 +59,11 @@ const envSchema = z.object({
   RENDER_TIMEOUT_MINUTES: z.coerce.number().positive().default(60),
   /** Run danser under xvfb-run, since it needs an X display even when recording. */
   RENDER_XVFB: flag.default(true),
+  /**
+   * Where danser draws: "gpu" runs its OpenGL on the GPU through VirtualGL (the render image has
+   * it; compose's nvidia profile sets this). "software" is Mesa on the CPU, many times slower.
+   */
+  RENDER_GL: z.enum(["gpu", "software"]).default("software"),
 
   // ---------- public replay pages and notifications ----------
 
@@ -79,6 +84,11 @@ const envSchema = z.object({
     .trim()
     .regex(/^https:\/\/(discord\.com|discordapp\.com|canary\.discord\.com)\/api\/webhooks\/\d+\/[\w-]+$/, "expected a Discord webhook URL")
     .optional(),
+  /**
+   * Videos up to this size are uploaded with the message, so they play in Discord even without
+   * PUBLIC_URL. Discord takes 10 MB unless the server is boosted. 0 never uploads.
+   */
+  DISCORD_ATTACH_MAX_MB: z.coerce.number().min(0).max(500).default(10),
 });
 
 export type Config = z.infer<typeof envSchema>;

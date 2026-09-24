@@ -16,8 +16,9 @@ import { writeStreamLimited } from "../render/maps.ts";
 import { replayTitle } from "../render/notify.ts";
 import {
   addRule, BUILTIN_SKIN, choosePreset, DEFAULT_PRESET_NAME, deletePreset, deleteRule, deleteSkin, getPreset, installSkin,
-  listPresets, listRules, listSkins, moveRule, savePreset, skinNameFrom, updateRule, type PresetChoice, type RenderPreset, type RenderRule,
+  listPresets, listRules, listSkins, moveRule, parsePatch, savePreset, skinNameFrom, updateRule, type PresetChoice, type RenderPreset, type RenderRule,
 } from "../render/presets.ts";
+import { fieldValue, mergePatch, SETTING_GROUPS, settingsFromForm, withoutFormKeys, type Patch, type SettingField } from "../render/settings-form.ts";
 import { ruleFacts, type RuleFacts } from "../render/rules.ts";
 import { updateReplayAttributes } from "../render/worker.ts";
 import { getReplay, listReplays, type ReplayView } from "../replays/store.ts";
@@ -108,40 +109,77 @@ function rulesSection(rules: readonly RenderRule[], presets: readonly RenderPres
   </section>`;
 }
 
-function presetsSection(presets: readonly RenderPreset[], rules: readonly RenderRule[], skins: readonly string[]): Html {
+function presetsSection(presets: readonly RenderPreset[], rules: readonly RenderRule[]): Html {
   return html`<section class="card" aria-label="Presets">
-    <h2>Presets</h2>
+    <div class="row wrap"><h2 class="grow">Presets</h2><a class="button" href="/render/presets/new">New preset</a></div>
     <div class="tablewrap"><table class="scores">
-      <thead><tr><th>Name</th><th>Skin</th><th>Description</th><th class="r">Rules</th></tr></thead>
+      <thead><tr><th>Name</th><th>Skin</th><th>Description</th><th class="r">Rules</th><th></th></tr></thead>
       <tbody>${presets.map(
         (p) => html`<tr>
           <td><a href="/render/presets/${p.name}">${p.name}</a></td>
           <td>${p.skin}</td>
           <td class="muted">${p.description}</td>
           <td class="r">${rules.filter((r) => r.preset === p.name).length}</td>
+          <td class="r"><a href="/render/presets/new?from=${p.name}" title="New preset starting from ${p.name}'s settings">Copy</a></td>
         </tr>`,
       )}</tbody>
     </table></div>
-    <details>
-      <summary>New preset</summary>
-      ${presetForm({ name: "", description: "", skin: BUILTIN_SKIN, patch: { Recording: { FrameWidth: 1920, FrameHeight: 1080, FPS: 60 } } }, skins, true)}
-    </details>
+    <p class="muted small">New presets start as a copy of <strong>${DEFAULT_PRESET_NAME}</strong>; change only what should differ.</p>
   </section>`;
 }
 
-function presetForm(p: RenderPreset, skins: readonly string[], create: boolean): Html {
-  return html`<form method="post" action="${create ? "/render/presets" : `/render/presets/${p.name}`}" class="stack">
-    ${create ? html`<label>Name <input name="name" required pattern="[a-z0-9][a-z0-9_\\-]{0,31}" placeholder="hd"></label>` : ""}
+function settingField(field: SettingField, patch: Patch): Html {
+  const value = fieldValue(field, patch);
+  const hint = field.hint ? html` <small class="muted">${field.hint}</small>` : "";
+  switch (field.kind) {
+    case "check":
+      return html`<label class="check"><input type="checkbox" name="${field.key}" value="1" ${value ? html`checked` : ""}> <span>${field.label}${hint}</span></label>`;
+    case "percent":
+      return html`<label class="field"><span>${field.label}</span>
+        <span class="nowrap"><input type="number" class="num" name="${field.key}" value="${value}" min="0" max="100" step="1" required> %</span></label>`;
+    case "number":
+      return html`<label class="field"><span>${field.label}${hint}</span>
+        <input type="number" class="num" name="${field.key}" value="${value}" min="${field.min}" max="${field.max}" step="${field.step}" required></label>`;
+    case "select":
+    case "resolution": {
+      const options: (readonly [string | number, string])[] = [...field.options];
+      // A value set by hand (or in the JSON) that the menu doesn't list stays selectable.
+      if (!options.some(([option]) => String(option) === String(value))) options.push([value as string | number, `${value} (custom)`]);
+      return html`<label class="field"><span>${field.label}${hint}</span>
+        <select name="${field.key}">${options.map(([option, label]) => html`<option value="${option}" ${String(option) === String(value) ? html`selected` : ""}>${label}</option>`)}</select></label>`;
+    }
+  }
+}
+
+function presetForm(p: RenderPreset, skins: readonly string[], create: { from: string } | null): Html {
+  const advanced = withoutFormKeys(p.patch);
+  const hasAdvanced = Object.keys(advanced).length > 0;
+  return html`<form method="post" action="${create ? `/render/presets?from=${encodeURIComponent(create.from)}` : `/render/presets/${p.name}`}" class="stack">
+    <input type="hidden" name="form" value="settings">
+    ${create ? html`<label>Name <input name="name" required pattern="[a-z0-9][a-z0-9_\\-]{0,31}" placeholder="hd" autofocus></label>` : ""}
     <label>Description <input name="description" value="${p.description}"></label>
     <label>Skin <select name="skin">
       <option value="${BUILTIN_SKIN}">danser's default</option>
       ${skins.map((skin) => html`<option value="${skin}" ${skin === p.skin ? html`selected` : ""}>${skin}</option>`)}
     </select></label>
-    <label>danser settings patch (JSON; keys as in danser's <code>settings/default.json</code>)
-      <textarea name="patch" rows="12" spellcheck="false" class="code">${JSON.stringify(p.patch, null, 2)}</textarea></label>
-    <p class="muted small">Examples: <code>{"Recording": {"FrameWidth": 1280, "FrameHeight": 720}}</code>,
-      <code>{"Recording": {"MotionBlur": {"Enabled": true}}}</code>. <code>General</code>, <code>Recording.OutputDir</code> and
-      <code>Recording.Container</code> are set by kiai.</p>
+    <div class="settings-groups">
+      ${SETTING_GROUPS.map(
+        (group) => html`<fieldset class="settings"><legend>${group.title}</legend>
+          ${group.id === "video"
+            ? html`<label class="check"><input type="checkbox" name="skip_intro" value="1" ${p.skipIntro ? html`checked` : ""}>
+                <span>Skip the intro <small class="muted">Starts at the first note, like o!rdr; faster to render.</small></span></label>`
+            : ""}
+          ${group.fields.map((field) => settingField(field, p.patch))}
+        </fieldset>`,
+      )}
+    </div>
+    <details ${hasAdvanced ? html`open` : ""} class="advanced">
+      <summary>Other danser settings (JSON)</summary>
+      <label>Anything the form above doesn't cover; keys as in danser's <code>settings/default.json</code>
+        <textarea name="advanced" rows="${hasAdvanced ? 8 : 4}" spellcheck="false" class="code">${hasAdvanced ? JSON.stringify(advanced, null, 2) : ""}</textarea></label>
+      <p class="muted small">Example: <code>{"Recording": {"h264_nvenc": {"CQ": 26}}}</code>. <code>General</code>, <code>Recording.OutputDir</code> and
+        <code>Recording.Container</code> are set by kiai. Where this and the form disagree, the form wins.</p>
+    </details>
     <button class="primary">${create ? "Create preset" : "Save"}</button>
   </form>`;
 }
@@ -216,6 +254,18 @@ export function registerRenderSettingsRoutes(app: Hono, deps: RenderSettingsDeps
     const body = await c.req.parseBody();
     return (name: string) => (typeof body[name] === "string" ? (body[name] as string) : "");
   };
+  const presetBody = async (c: Context) => {
+    const body = await c.req.parseBody();
+    const raw = (name: string) => (typeof body[name] === "string" ? (body[name] as string) : undefined);
+    return { raw, get: (name: string) => raw(name) ?? "" };
+  };
+  /** A preset from the settings form: the form's fields over whatever the JSON box adds. */
+  const presetFromForm = (body: Awaited<ReturnType<typeof presetBody>>) => ({
+    description: body.get("description"),
+    skin: body.get("skin"),
+    patch: mergePatch(withoutFormKeys(parsePatch(body.get("advanced"))), settingsFromForm(body.raw)),
+    skipIntro: body.get("skip_intro") === "1",
+  });
   const ruleId = (c: Context) => {
     const id = Number(c.req.param("id"));
     if (!Number.isSafeInteger(id) || id <= 0) throw new UserError("Unknown rule.");
@@ -229,7 +279,32 @@ export function registerRenderSettingsRoutes(app: Hono, deps: RenderSettingsDeps
     return c.html(
       layout(
         "Render settings",
-        html`${notices(c)}${rulesSection(rules, presets)}${dryRunSection(replays, result, selected)}${presetsSection(presets, rules, skins)}${skinsSection(skins, presets)}`,
+        html`${notices(c)}${rulesSection(rules, presets)}${dryRunSection(replays, result, selected)}${presetsSection(presets, rules)}${skinsSection(skins, presets)}`,
+        player,
+      ),
+      200,
+      PRIVATE,
+    );
+  });
+
+  app.get("/render/presets/new", async (c) => {
+    const presets = await listPresets(sql);
+    const from = presets.find((p) => p.name === c.req.query("from")) ?? presets.find((p) => p.name === DEFAULT_PRESET_NAME);
+    if (!from) throw new Error("The default render preset is missing from the database.");
+    const skins = await listSkins(media);
+    return c.html(
+      layout(
+        "New preset",
+        html`<p><a href="/render">← Render settings</a></p>${notices(c)}
+        <section class="card">
+          <h1>New preset</h1>
+          <form method="get" action="/render/presets/new" class="row wrap">
+            <label>Start from <select name="from">${presetOptions(presets, from.name)}</select></label>
+            <button>Load its settings</button>
+          </form>
+          <p class="muted small">Everything below is copied from <strong>${from.name}</strong>. Change what this preset should do differently.</p>
+          ${presetForm({ ...from, name: "", description: "" }, skins, { from: from.name })}
+        </section>`,
         player,
       ),
       200,
@@ -245,7 +320,7 @@ export function registerRenderSettingsRoutes(app: Hono, deps: RenderSettingsDeps
       layout(
         `Preset ${preset.name}`,
         html`<p><a href="/render">← Render settings</a></p>${notices(c)}
-        <section class="card"><h1>Preset ${preset.name}</h1>${presetForm(preset, skins, false)}</section>
+        <section class="card"><div class="row wrap"><h1 class="grow">Preset ${preset.name}</h1><a class="button" href="/render/presets/new?from=${preset.name}">Copy to a new preset</a></div>${presetForm(preset, skins, null)}</section>
         ${preset.name !== DEFAULT_PRESET_NAME
           ? html`<section class="card"><form method="post" action="/render/presets/${preset.name}/delete"><button class="dangerous">Delete preset</button></form></section>`
           : html`<p class="muted small">The default preset is used when no rule matches, so it can't be deleted.</p>`}`,
@@ -256,15 +331,38 @@ export function registerRenderSettingsRoutes(app: Hono, deps: RenderSettingsDeps
     );
   });
 
-  app.post("/render/presets", form(() => "/render", async (c) => {
-    const get = await field(c);
-    await savePreset(sql, media, { name: get("name"), description: get("description"), skin: get("skin"), patch: get("patch") }, { create: true });
-    return `/render/presets/${get("name").trim().toLowerCase()}?notice=${encodeURIComponent("Preset created.")}`;
+  app.post("/render/presets", form((c) => `/render/presets/new?from=${encodeURIComponent(c.req.query("from") ?? DEFAULT_PRESET_NAME)}`, async (c) => {
+    const body = await presetBody(c);
+    const name = body.get("name");
+    if (body.get("form") === "settings") {
+      await savePreset(sql, media, { name, ...presetFromForm(body) }, { create: true });
+    } else {
+      // A bare JSON patch (scripts): it goes over the default preset's settings.
+      const base = await getPreset(sql, DEFAULT_PRESET_NAME);
+      await savePreset(
+        sql,
+        media,
+        {
+          name,
+          description: body.get("description"),
+          skin: body.get("skin") || (base?.skin ?? BUILTIN_SKIN),
+          patch: mergePatch(base?.patch ?? {}, parsePatch(body.get("patch"))),
+          skipIntro: base?.skipIntro,
+        },
+        { create: true },
+      );
+    }
+    return `/render/presets/${name.trim().toLowerCase()}?notice=${encodeURIComponent("Preset created.")}`;
   }));
 
   app.post("/render/presets/:name", form((c) => `/render/presets/${c.req.param("name")}`, async (c) => {
-    const get = await field(c);
-    await savePreset(sql, media, { name: c.req.param("name") ?? "", description: get("description"), skin: get("skin"), patch: get("patch") }, { create: false });
+    const body = await presetBody(c);
+    const name = c.req.param("name") ?? "";
+    const input =
+      body.get("form") === "settings"
+        ? presetFromForm(body)
+        : { description: body.get("description"), skin: body.get("skin"), patch: body.get("patch") };
+    await savePreset(sql, media, { name, ...input }, { create: false });
     return "Saved. New renders use it.";
   }));
 

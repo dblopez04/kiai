@@ -226,16 +226,22 @@ async function dispatch(command: string, args: string[], rt: Runtime, io: Io): P
         paths: media,
         encoder: config.RENDER_ENCODER,
         xvfb: config.RENDER_XVFB,
+        gl: config.RENDER_GL,
         timeoutMs: config.RENDER_TIMEOUT_MINUTES * 60_000,
         log: rt.log,
       });
-      rt.log(`render worker started: ${config.RENDER_CONCURRENCY} slot(s), encoder ${config.RENDER_ENCODER}, danser in ${config.DANSER_DIR}`);
+      rt.log(
+        `render worker started: ${config.RENDER_CONCURRENCY} slot(s), ${config.RENDER_GL === "gpu" ? "GPU (VirtualGL)" : "software"} OpenGL, ` +
+          `encoder ${config.RENDER_ENCODER}, danser in ${config.DANSER_DIR}`,
+      );
+      if (config.RENDER_GL === "software") rt.log("danser draws on the CPU (RENDER_GL=software), which is slow; on an NVIDIA host set RENDER_GL=gpu");
       if (!rt.osuOrNull()) rt.log("no osu! credentials: only beatmaps already on disk or uploaded can be rendered");
       const notifier = discordNotifier({
         botToken: config.DISCORD_BOT_TOKEN,
         userId: config.DISCORD_USER_ID,
         webhookUrl: config.DISCORD_WEBHOOK_URL,
         publicUrl: config.PUBLIC_URL,
+        attachMaxBytes: config.DISCORD_ATTACH_MAX_MB * 1024 * 1024,
       });
       rt.log(notifier ? `Discord notifications on (${config.DISCORD_BOT_TOKEN && config.DISCORD_USER_ID ? "DM" : "webhook"})` : "Discord notifications off");
       await runRenderWorker(

@@ -106,7 +106,8 @@ Phases 3–5 implement all six steps, plus the score link. Modules:
 | `replays/store.ts` | Saving uploads (deduplicated by SHA-256, random 10-character ids), replay views, `linkReplays` |
 | `render/maps.ts` | `beatmap_files` (every extracted .osu by MD5), safe .osz extraction (yauzl, no path escapes, size caps), mirror downloads, `ensureBeatmap` |
 | `render/queue.ts` | `render_jobs`: one unfinished job per replay, `for update skip locked` claims so several slots can run, leases with heartbeats, 3 attempts |
-| `render/danser.ts` | Runs `danser-cli` under `xvfb-run` in its own process group; progress from danser's log; timeout |
+| `render/danser.ts` | Runs `danser-cli` under `xvfb-run` (and `vglrun` for GPU GL) in its own process group; progress and GL renderer from danser's log; timeout |
+| `render/settings-form.ts` | The danser settings the preset editor shows as checkboxes, menus and numbers |
 | `replays/attributes.ts` | Step 3: the map with the replay's mods applied (rosu-pp), stored in `replays.attributes` |
 | `render/rules.ts` | Rule expressions (`HD and ar < 10.3`): parser, matcher, and the facts a replay offers |
 | `render/presets.ts` | `render_presets`, `render_rules` (ordered, first match wins, `default` otherwise), skins in `data/skins` |
@@ -125,8 +126,14 @@ What the code relies on from danser 0.11's source:
   therefore means "exit 0 and the video exists".
 - The release bundles its own ffmpeg 7 (with NVENC) in `ffmpeg/`. Its rpath is broken, so the
   worker sets `LD_LIBRARY_PATH`.
-- Under Xvfb, GL runs on Mesa (llvmpipe, on the CPU); only encoding uses the GPU. If rendering is
-  too slow on the homelab, the next step is a headless Xorg with the NVIDIA driver instead of Xvfb.
+- Under plain Xvfb, GL runs on Mesa (llvmpipe, on the CPU) and only encoding uses the GPU, which
+  made renders very slow. With `RENDER_GL=gpu` (the nvidia profile) danser runs under VirtualGL's
+  `vglrun -d egl`: GL goes to the GPU through NVIDIA's EGL, the window stays on Xvfb, and
+  `VGL_READBACK=none` skips copying frames back to it. danser logs `GL Renderer: <name>`; the
+  worker repeats it and warns when it's a software renderer. o!rdr's client gets the same effect
+  by requiring a real display.
+- `-skip` starts at the first hit object (o!rdr's default); presets turn it on with "Skip the intro".
+- The recording ffmpeg command adds `-movflags +faststart`, so videos stream in browsers and Discord.
 
 1. Upload `.osr` → parse the header: beatmap MD5, mods, player, and score stats.
 2. Find the map by MD5: osu! API v2 `beatmaps/lookup?checksum=` or a mirror, then download
@@ -141,18 +148,23 @@ What the code relies on from danser 0.11's source:
    3. default                   → "default"
    ```
 5. Render: `danser-cli -replay <osr> -record -out <id> -settings <base> -skin <skin>
-   -sPatch '<preset json>' -quickstart -noupdatecheck`. `-sPatch` patches the loaded
-   settings for that one run, so a preset is a base settings file plus a JSON patch.
+   -sPatch '<preset json>' -quickstart -noupdatecheck [-skip]`. `-sPatch` patches the loaded
+   settings for that one run, so a preset is a base settings file plus a JSON patch. The
+   editor shows the common settings as checkboxes and menus (`render/settings-form.ts`, with
+   danser's defaults, so the patch keeps only what differs) and everything else as JSON. New
+   presets start as a copy of `default` (or of the preset whose Copy link was used).
 6. Notify. Discord DMs need a bot that shares a server with the user, since webhooks can't
-   send DMs. The message is a rich embed (cover, mods, accuracy, pp, preset used) plus the
-   replay page link, whose `og:video` tags make Discord play the video inline. A webhook to
-   a private channel is the no-setup alternative.
+   send DMs. The message is plain text: Discord doesn't unfurl links in a message that carries
+   its own embed. Videos up to `DISCORD_ATTACH_MAX_MB` are uploaded with it and play as they
+   are. Bigger ones are linked, and the replay page's `og:video` and `twitter:card=player` tags
+   make Discord play them inline. A webhook to a private channel is the no-setup alternative.
 
 ## Deployment facts
 
 - danser 0.11 ships Linux builds for x86_64 only and uses BASS, so the render host must
   be x86_64.
-- danser opens a hidden GLFW window, so the worker needs Xvfb plus the GPU.
+- danser opens a hidden GLFW window, so the worker needs Xvfb plus the GPU (VirtualGL bridges
+  the two; the container needs NVIDIA's `graphics` driver capability for it).
 - The target host is x86_64 with an NVIDIA GTX 1050 Ti on Docker. That means
   nvidia-container-toolkit on the host and a compose profile for NVIDIA. Pascal NVENC
   handles H.264 and HEVC but not AV1, so presets default to `h264_nvenc`. Other GPUs get
