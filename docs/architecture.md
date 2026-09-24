@@ -64,6 +64,28 @@ reads osu! with a client-credentials token, so there's no osu! sign-in. The play
 | `sync/runner.ts`, `sync/worker.ts` | Run jobs; queue scheduled recent syncs |
 | `http/` | Hono app: server-rendered pages (`views.ts`), small progressive-enhancement script, JSON/CSV API, private-network guard (`private.ts`) |
 
+## Match database
+
+Tournament matches (stable mp lobbies) and lazer ranked play rooms, for the same one player. It
+is private like the score library.
+
+| Module | |
+|---|---|
+| `db/migrations/003_matches.sql` | `matches`, `match_games`, `match_scores` (same columns as `scores`, NoFail left out of `mod_acronyms`), `match_players` (match costs), view `match_score_rows`, `match_queue`, `match_discovery` |
+| `matches/normalize.ts` | Stable `GET /matches/{id}` pages and lazer `GET /rooms/{id}/events` pages → one shape; tournament name parsing |
+| `matches/cost.ts` | Bathbot's match cost (`process_match`), per-game winners, sides and score line. Pure |
+| `matches/store.ts` | Fetch every event page (101 per request), save, local PP (rosu-pp, without NF), recompute match costs |
+| `matches/queue.ts` | Fetch queue: requested (0) → refreshing in-progress matches (1) → discovery probes (2); backoff, permanent failures for private/missing matches |
+| `matches/discovery.ts` | Stable crawler over `GET /matches?sort=id_asc` (cursor = base64url JSON `{"match_id"}`), two hours behind, probing tournament-style names; lazer crawler over ended ranked play rooms with a watermark |
+| `matches/worker.ts` | Queue first, then crawl (stable 3 turns in 4). Runs next to the sync worker with the same rate limiter |
+| `matches/query.ts` | Match filters relative to the player (with/against/result/match cost), match detail, tournament score search on `match_score_rows` through `scoreConditions` |
+| `http/match-routes.ts`, `http/match-views.ts` | Pages and API |
+
+Things that are not verified against live osu! yet (the tests use fakes): the ranked play room
+listing's cursor (`{"ends_at", "id"}` for `sort=ended`), whether `recent_participants` always
+includes both ranked play players, and ranked play's `details.teams` shape. Ranked play is
+decided by more than map wins, so its score line only counts maps won.
+
 Differences from the proof of concept:
 - **Filtering:** best-per-map and exact-mod filters run in SQL (`distinct on`, array
   containment) instead of loading every match into memory.
@@ -147,7 +169,8 @@ What the code relies on from danser 0.11's source:
 
 1. **Done:** repo scaffold, client presets and `.desktop` entries (ported to Go).
 2. **Done:** private single-player score library (sync worker, search/filter, local PP, CSV,
-   web UI, compose).
+   web UI, compose). Match database: Elitebotix import, discovery, Bathbot match costs,
+   tournament score search.
 3. **Done:** render MVP: upload endpoint, map fetching, render container, one hard-coded
    preset; `kiai render <file.osr>` by hand. Each replay is linked to its `scores` row when
    osu! has the score, so the gallery can filter replays with `scores/query.ts`.

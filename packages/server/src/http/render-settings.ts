@@ -138,7 +138,7 @@ function presetForm(p: RenderPreset, skins: readonly string[], create: boolean):
       ${skins.map((skin) => html`<option value="${skin}" ${skin === p.skin ? html`selected` : ""}>${skin}</option>`)}
     </select></label>
     <label>danser settings patch (JSON; keys as in danser's <code>settings/default.json</code>)
-      <textarea name="patch" rows="12" spellcheck="false">${JSON.stringify(p.patch, null, 2)}</textarea></label>
+      <textarea name="patch" rows="12" spellcheck="false" class="code">${JSON.stringify(p.patch, null, 2)}</textarea></label>
     <p class="muted small">Examples: <code>{"Recording": {"FrameWidth": 1280, "FrameHeight": 720}}</code>,
       <code>{"Recording": {"MotionBlur": {"Enabled": true}}}</code>. <code>General</code>, <code>Recording.OutputDir</code> and
       <code>Recording.Container</code> are set by kiai.</p>

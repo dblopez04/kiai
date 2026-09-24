@@ -14,6 +14,7 @@ import { scoreCsv } from "../scores/csv.ts";
 import { getScore, listScores, parseScoreFilters, scoreStats } from "../scores/query.ts";
 import { SYNC_MODES, type SyncMode } from "../sync/checkpoint.ts";
 import { enqueueSync, syncOverview } from "../sync/queue.ts";
+import { mountMatchRoutes } from "./match-routes.ts";
 import { checkPrivateRequest } from "./private.ts";
 import { registerReplayRoutes } from "./replays.ts";
 import { dashboardPage, messagePage, scorePage, syncStatus } from "./views.ts";
@@ -25,7 +26,7 @@ export interface AppDeps {
   player: Player;
   /** Where uploaded replays, videos and beatmaps live. */
   media: MediaPaths;
-  config: Pick<Config, "RECENT_WINDOW_HOURS" | "PRIVATE_HOSTS" | "UPLOAD_TOKEN" | "PUBLIC_URL">;
+  config: Pick<Config, "RECENT_WINDOW_HOURS" | "PRIVATE_HOSTS" | "UPLOAD_TOKEN" | "PUBLIC_URL"> & Partial<Pick<Config, "MATCH_DISCOVERY">>;
 }
 
 const ASSETS: Record<string, { type: string; body: string }> = {
@@ -76,6 +77,8 @@ export function createApp(deps: AppDeps): Hono {
     if (!deps.osu) throw new UserError("Imports need OSU_CLIENT_ID and OSU_CLIENT_SECRET to be configured.");
     return enqueueSync(sql, { userId: player.id, mode, trigger, recentWindowHours: windowHours ?? deps.config.RECENT_WINDOW_HOURS });
   }
+
+  mountMatchRoutes(app, deps);
 
   // ---------- pages ----------
 

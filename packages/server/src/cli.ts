@@ -1,4 +1,5 @@
 import { createWriteStream } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
@@ -9,6 +10,10 @@ import { connectDb, migrate, type Sql } from "./db/index.ts";
 import { UserError } from "./errors.ts";
 import { createApp } from "./http/app.ts";
 import { createPublicApp } from "./http/public.ts";
+import { scanStableFrom } from "./matches/discovery.ts";
+import { parseMatchRefs } from "./matches/import.ts";
+import { enqueueMatches } from "./matches/queue.ts";
+import { runMatchWorker } from "./matches/worker.ts";
 import { ensureMediaDirs, mediaPaths } from "./media.ts";
 import { OsuApi, type OsuClient } from "./osu/api.ts";
 import { RateLimiter } from "./osu/rate-limit.ts";
@@ -35,6 +40,12 @@ Usage:
                                 Queue a sync for OSU_USER (default: recent). The worker runs it.
   server export [--out file.csv]
                                 Write the whole library as CSV (default: stdout)
+  server matches import <file>  Queue every match link in a file ("-" for stdin), such as
+                                Elitebotix's /osu-history onlymatchhistory export
+  server matches add <link|id>...
+                                Queue mp links, ranked play room links or match ids
+  server matches scan-from <match id>
+                                Point stable discovery at a match id and scan forward from it
 
 Configuration comes from the environment (see .env.example).
 `;
@@ -155,13 +166,21 @@ async function startWeb(rt: Runtime, player: Player, signal: AbortSignal): Promi
 function startWorker(rt: Runtime, player: Player, signal: AbortSignal, once = false): Promise<void> {
   const deps = { sql: rt.sql, osu: rt.osu(), pp: rt.pp(), config: rt.config, log: rt.log };
   rt.log(`sync worker started for ${player.username}${rt.config.SYNC_INTERVAL_HOURS > 0 ? `; recent syncs every ${rt.config.SYNC_INTERVAL_HOURS}h` : ""}`);
-  return runWorker(deps, {
+  const sync = runWorker(deps, {
     playerId: player.id,
     signal,
     once,
     syncIntervalHours: rt.config.SYNC_INTERVAL_HOURS,
     recentWindowHours: rt.config.RECENT_WINDOW_HOURS,
   });
+  if (once) return sync;
+  // Matches are fetched alongside score syncs; both share the osu! rate limiter.
+  rt.log(`match worker started${rt.config.MATCH_DISCOVERY ? " with discovery" : ""}`);
+  const matches = runMatchWorker(
+    { sql: rt.sql, osu: rt.osu(), pp: rt.pp(), playerId: player.id, playerName: player.username, discovery: rt.config.MATCH_DISCOVERY, log: rt.log },
+    { signal },
+  );
+  return Promise.all([sync, matches]).then(() => {});
 }
 
 async function dispatch(command: string, args: string[], rt: Runtime, io: Io): Promise<number> {
@@ -260,6 +279,36 @@ async function dispatch(command: string, args: string[], rt: Runtime, io: Io): P
       await pipeline(Readable.from(scoreCsv(rt.sql, player.id)), target, { end: target !== process.stdout });
       if (values.out) io.err(`wrote ${values.out}`);
       return 0;
+    }
+
+    case "matches": {
+      const [sub, ...rest] = args;
+      await rt.player();
+      if (sub === "import" || sub === "add") {
+        if (rest.length === 0) throw new UserError(sub === "import" ? "Give a file to import, or - for stdin." : "Give at least one match link or id.");
+        const text =
+          sub === "add"
+            ? rest.join("\n")
+            : rest[0] === "-"
+              ? await new Response(Readable.toWeb(process.stdin) as ReadableStream).text()
+              : await readFile(rest[0]!, "utf8");
+        const parsed = parseMatchRefs(text);
+        const result = await enqueueMatches(rt.sql, parsed.refs, { addedVia: sub === "add" ? "manual" : "import" });
+        io.out(
+          `Found ${parsed.refs.length} match links: queued ${result.queued}, ${result.known} already saved` +
+            (parsed.hidden ? `, ${parsed.hidden} hidden by Elitebotix skipped.` : "."),
+        );
+        if (result.queued) io.out("The worker (serve or worker) fetches them.");
+        return 0;
+      }
+      if (sub === "scan-from") {
+        const from = Number(rest[0]);
+        if (!Number.isSafeInteger(from) || from <= 0) throw new UserError("Give the match id to scan from.");
+        await scanStableFrom(rt.sql, from);
+        io.out(`Stable discovery will scan lobbies from match ${from} onwards.`);
+        return 0;
+      }
+      throw new UserError('Usage: server matches import <file> | add <link|id>... | scan-from <match id>');
     }
 
     default:

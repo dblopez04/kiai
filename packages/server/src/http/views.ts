@@ -49,8 +49,8 @@ export function layout(title: string, body: Html, player: Player): Html {
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/">kiai</a>
-  <nav><a href="/">Scores</a><a href="/replays">Replays</a><a href="/render">Render settings</a><a class="who" href="https://osu.ppy.sh/users/${player.id}" target="_blank" rel="noopener noreferrer">${player.username}</a></nav>
+  <nav class="sections"><a class="brand" href="/">kiai</a><a href="/">Scores</a><a href="/matches">Matches</a><a href="/matches/scores">Tournament scores</a><a href="/replays">Replays</a><a href="/render">Render settings</a></nav>
+  <nav><a class="who" href="https://osu.ppy.sh/users/${player.id}" target="_blank" rel="noopener noreferrer">${player.username}</a></nav>
 </header>
 <main>${body}</main>
 </body>
@@ -73,7 +73,7 @@ export function modChips(mods: readonly ScoreMod[]): Html {
 
 const COMMON_MODS = ["HD", "HR", "DT", "NC", "HT", "DC", "EZ", "NF", "FL", "CL", "DA"];
 
-function modFilter(f: ScoreFilters): Html {
+export function modFilter(f: ScoreFilters): Html {
   const state = (acronym: string) =>
     f.mods.includes(acronym) ? "required" : f.modsOptional.includes(acronym) ? "optional" : f.modsExcluded.includes(acronym) ? "excluded" : "off";
   const button = (mod: { acronym: string; name: string }) =>
@@ -108,11 +108,16 @@ const SORT_LABELS: Record<(typeof SORT_KEYS)[number], string> = {
 const STATUSES = ["ranked", "approved", "loved", "qualified", "pending", "wip", "graveyard"];
 const RANKS = ["SS", "S", "A", "B", "C", "D"];
 
-const checked = (on: boolean) => (on ? html`checked` : "");
-const numberValue = (n: number | null) => (n === null ? "" : String(n));
+export const checked = (on: boolean) => (on ? html`checked` : "");
+export const numberValue = (n: number | null) => (n === null ? "" : String(n));
 
-function filterForm(f: ScoreFilters): Html {
-  return html`<form method="get" action="/" class="card filters" data-filters>
+/**
+ * The score filters. The tournament score search reuses it with its own action and extra fields
+ * (player, match name).
+ */
+export function filterForm(f: ScoreFilters, options: { action?: string; extra?: Html } = {}): Html {
+  const action = options.action ?? "/";
+  return html`<form method="get" action="${action}" class="card filters" data-filters>
     <div class="row wrap">
       <input type="search" name="q" value="${f.q}" placeholder="Search title, artist or difficulty" aria-label="Search" class="grow">
       <label>Sort <select name="sort">${SORT_KEYS.map((key) => html`<option value="${key}" ${f.sort === key ? html`selected` : ""}>${SORT_LABELS[key]}</option>`)}</select></label>
@@ -131,13 +136,14 @@ function filterForm(f: ScoreFilters): Html {
       <label>Stars <input type="number" name="min_stars" value="${numberValue(f.minStars)}" placeholder="min" step="0.1" class="num"> – <input type="number" name="max_stars" value="${numberValue(f.maxStars)}" placeholder="max" step="0.1" class="num"></label>
       <label>Speed × <input type="number" name="min_rate" value="${numberValue(f.minRate)}" placeholder="min" step="0.05" min="0.01" max="100" class="num"> – <input type="number" name="max_rate" value="${numberValue(f.maxRate)}" placeholder="max" step="0.05" min="0.01" max="100" class="num"></label>
     </div>
+    ${options.extra ?? ""}
     ${modFilter(f)}
     <div class="row wrap">
       <label class="check"><input type="checkbox" name="best_only" value="true" ${checked(f.bestOnly)}> Best score per map</label>
       <label class="check" title="Only required and optional mods may be present"><input type="checkbox" name="mods_exact" value="true" ${checked(f.modsExact)}> Exact mods</label>
       <label class="check" title="No mods, or Classic only"><input type="checkbox" name="nomod" value="true" ${checked(f.nomod)}> NM only</label>
       <span class="grow"></span>
-      <a href="/">Reset filters</a>
+      <a href="${action}">Reset filters</a>
       <button class="primary">Apply</button>
     </div>
   </form>`;

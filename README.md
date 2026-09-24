@@ -6,6 +6,7 @@ Tools for osu! players on Linux who run a homelab.
 |---|---|
 | osu-winello presets with app-launcher shortcuts | **done** (client) |
 | Private score library: auto-synced scores, search/filter, local PP, CSV exports | **done** (server) |
+| Match database: tournament mp links and lazer ranked play, Bathbot match costs, tournament score search | **done** (server) |
 | Replay rendering with danser on the homelab GPU: `kiai render <file.osr>` | **done** (client + server) |
 | Replay watcher (systemd user service), Discord DM or webhook with the link | **done** (client + server) |
 | Render presets chosen by rules on the replay (mods, AR, server, ...), skin uploads, editor | **done** (server + client) |
@@ -159,6 +160,45 @@ them. Overwritten and deleted scores stay in the library.
   also export everything, or just the current filter. Cells that look like spreadsheet
   formulas are neutralized.
 
+### Match database
+
+**Matches** keeps your tournament matches (stable mp links) and lazer ranked play rooms. Each
+match has every map played and every player's score.
+
+- **Getting your history:** in Discord, run Elitebotix's `/osu-history` with
+  `onlymatchhistory: True`. Paste the text file it sends into **Import**, or upload it (or run
+  `server matches import history.txt`). Any text with mp links or
+  `osu.ppy.sh/multiplayer/rooms/<id>` links works too, and so does **Add** with a single link or
+  id. Elitebotix hides recent qualifier links; kiai counts and skips them.
+- **Discovery:** osu! has no "matches this player played" endpoint. Instead, kiai walks osu!'s
+  list of every public stable lobby (`GET /matches`), staying two hours behind the newest one.
+  It fetches the lobbies with tournament-style names (`ACR: (A) vs (B)`, qualifier lobbies) or
+  your name, and keeps those you played in. Ended ranked play rooms list their players, so
+  yours are queued directly. Stable gets three crawl turns out of four. The stable crawl starts
+  at the newest lobby; **Scan from match id** (or `server matches scan-from <id>`) backfills from
+  an older match, for example to catch qualifiers Elitebotix hid. Pause either crawler on the
+  page, or set `MATCH_DISCOVERY=false`.
+- **Match costs** use [Bathbot's formula](https://github.com/MaxOhn/Bathbot), so they match its
+  `<matchcosts`. Each map's score is divided by that map's average and the results are
+  averaged, plus 0.5. That is multiplied by up to 1.5 for playing every map and by 1.02 for each
+  mod combination beyond two (NoFail doesn't count). A tiebreaker adds up to 0.5. Zero scores
+  are left out. Each match page can set warmups, maps to skip at the end, and an EZ multiplier;
+  changing them recalculates the match.
+- **Searching matches:** by name, teammates (**With**: players on your side), opponents
+  (**Against**), result, source, match cost, maps played and date. Sort by date, match cost,
+  maps, average score, accuracy or name. In a 1v1 the other player is your opponent. In a
+  qualifier or free-for-all lobby, everyone else counts as an opponent.
+- **Tournament scores** searches every score in saved matches with the score library's filters
+  (mods, PP, stars, speed, rank, best per map...), plus player (you, anyone, or `all`), match
+  name and source. NoFail is ignored in mod filters, since tournaments force it, so NM means
+  no other mods. osu! gives stable multiplayer scores no PP, so it's calculated locally with
+  rosu-pp, without NoFail (marked `*`). Ranked play scores keep osu!'s PP when osu! has it.
+- Matches still in progress are fetched again every 10 minutes for up to a day. Private or
+  missing matches are listed as failed, with **Retry** and **Forget** buttons.
+
+The match worker runs next to the sync worker in `serve` and `worker`, sharing the rate limit.
+A long history import slows it down but doesn't stop it.
+
 Jobs run one at a time, since they share osu!'s rate limit (one request per 1.1 s). Each job
 holds a lease it renews every 15 s. If a worker dies, its job is taken over after five
 minutes.
@@ -260,6 +300,9 @@ server export --out scores.csv
 server worker --once               # process one queued job and exit
 server render-worker [--once]      # the render worker (what the render containers run)
 server public                      # the public replay pages on PUBLIC_PORT
+server matches import history.txt  # Elitebotix /osu-history export, or any text with mp links ("-" = stdin)
+server matches add https://osu.ppy.sh/mp/119283746
+server matches scan-from 118000000 # stable discovery scans forward from this match id
 ```
 
 ### HTTP API
@@ -284,6 +327,12 @@ Same privacy rules as the pages: private hostnames only. Uploads also need `UPLO
 | `GET /api/render/dry-run?replay=<id>` | Which preset the rules pick for a replay, and why |
 | `PUT /api/skins/:name` | Upload an .osk (raw body, bearer token); replaces a skin of that name |
 | `GET /replays/:id/video` | The rendered mp4, with byte ranges |
+| `GET /api/matches?…filters` | Paged matches. Filters: `q`, `sort` (`date`, `match_cost`, `maps`, `avg_score`, `accuracy`, `name`), `order`, `page`, `page_size`, `source` (`stable`, `lazer`), `with`, `vs` (comma-separated names or ids), `result` (`won`, `lost`), `played`, `tournament`, `min_cost`/`max_cost`, `min_maps`/`max_maps`, `date_from`/`date_to` |
+| `GET /api/matches/:id` | One match: players with match costs, every map and score |
+| `GET /api/matches/scores?…filters` | Tournament scores: the `/api/scores` filters plus `player` (`me`, `all`, a name or id), `match` and `source` |
+| `GET /api/matches/stats` | Record, match costs and tournament count |
+| `GET /api/matches/queue` | Fetch queue and discovery progress |
+| `POST /api/matches/import` | `{"text": "..."}` queues every match link in the text |
 
 ## Development
 
