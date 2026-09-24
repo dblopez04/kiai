@@ -6,8 +6,8 @@
 // fetches the match and keeps it only if the player took part. It stays two hours behind the
 // newest lobby, so most tournament matches have finished by the time they're probed.
 //
-// Lazer: ended ranked play rooms are listed with their participants, so rooms the player played
-// in are queued directly. The first pass walks back through every ranked play room.
+// Lazer: the profile's ranked play history lists the rooms the player set a score in, so each one
+// is queued directly. The first pass walks back through the player's whole history.
 
 import type { Sql } from "../db/index.ts";
 import { sqlJson } from "../db/index.ts";
@@ -20,7 +20,7 @@ import { enqueueMatches, PRIORITY } from "./queue.ts";
 
 export const STABLE_DELAY_MS = 2 * 3600_000;
 const STABLE_PAGE = 50;
-const ROOM_PAGE = 250;
+const ROOM_PAGE = 50;
 
 export interface DiscoveryDeps {
   sql: Sql;
@@ -115,20 +115,23 @@ const newer = (a: RoomKey, b: RoomKey) => {
   return at > bt || (at === bt && a.id > b.id);
 };
 
-/** One page of ended ranked play rooms, newest first, down to the previous pass's newest. */
+/** One page of the player's ended ranked play rooms, newest first, down to the previous pass's newest. */
 export async function crawlLazer(deps: DiscoveryDeps): Promise<CrawlResult> {
   const { sql, osu } = deps;
   const cursor = (await lock(sql, "lazer")) as LazerCursor | null;
   if (!cursor) return "skipped";
   try {
     const pass = cursor.pass ?? {};
-    const rooms = await osu.listRankedPlayRooms({ limit: ROOM_PAGE, ...(pass.after ? { cursorString: encodeCursor(pass.after) } : {}) });
+    const page = await osu.listUserRankedPlayRooms(deps.playerId, {
+      limit: ROOM_PAGE,
+      ...(pass.after ? { cursorString: encodeCursor(pass.after) } : {}),
+    });
     let top = pass.top;
     let after = pass.after;
     let reachedWatermark = false;
     let scanned = 0;
-    const mine = [];
-    for (const room of rooms) {
+    const mine: MatchRef[] = [];
+    for (const room of page.rooms) {
       const key = roomKey(room);
       if (!key) continue;
       if (cursor.watermark && !newer(key, cursor.watermark)) {
@@ -138,12 +141,11 @@ export async function crawlLazer(deps: DiscoveryDeps): Promise<CrawlResult> {
       scanned++;
       if (!top || newer(key, top)) top = key;
       after = key;
-      const players = [...(room.recent_participants ?? []), ...(room.host ? [room.host] : [])];
-      if (players.some((p) => p.id === deps.playerId)) mine.push({ source: "lazer" as const, externalId: room.id, ...(room.name ? { name: room.name } : {}) });
+      mine.push({ source: "lazer", externalId: room.id, ...(room.name ? { name: room.name } : {}) });
     }
     await enqueueMatches(sql, mine, { addedVia: "discovery", priority: PRIORITY.discovery });
     if (mine.length) await sql`update match_discovery set found = found + ${mine.length} where source = 'lazer'`;
-    const done = reachedWatermark || rooms.length < ROOM_PAGE;
+    const done = reachedWatermark || !page.cursor_string;
     const next: LazerCursor = done
       ? { ...((top ?? cursor.watermark) ? { watermark: (top ?? cursor.watermark)! } : {}) }
       : { ...(cursor.watermark ? { watermark: cursor.watermark } : {}), pass: { ...(after ? { after } : {}), ...(top ? { top } : {}) } };

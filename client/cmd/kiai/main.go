@@ -1,5 +1,5 @@
-// Command kiai runs on the PC you play on: osu-winello presets and their app-launcher
-// entries, and replay uploads (by hand or with the watcher) for rendering on the kiai server.
+// Command kiai runs on the PC you play on: it uploads the replays you export (by hand or with
+// the watcher) to the kiai server for rendering.
 package main
 
 import (

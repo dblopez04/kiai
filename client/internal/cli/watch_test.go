@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/dblopez04/kiai/client/internal/launch"
 )
 
 // watchHarness has a server, an osu! install whose Replays folder is watched, and a clock.
@@ -63,8 +61,7 @@ func (w *watchHarness) uploads() int {
 func TestWatchUploadsNewReplaysOnceTheyAreWritten(t *testing.T) {
 	w := newWatchHarness(t, &fakeServer{})
 	os.WriteFile(filepath.Join(w.replays, "old.osr"), []byte("replay bytes"), 0o644)
-	devserver := "akatsuki.gg"
-	launch.WriteSession(w.paths.SessionFile, launch.Session{Preset: "akatsuki", Devserver: &devserver, LaunchedAt: "2026-09-23T10:00:00.000Z"})
+	w.setDevserver("akatsuki.gg")
 	watcher := w.watcher(false)
 
 	w.step(watcher)

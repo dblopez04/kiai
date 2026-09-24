@@ -12,16 +12,8 @@ type Getenv func(string) string
 
 type Paths struct {
 	Home string
-	// Our own preset list and settings.
+	// Our own settings.
 	ConfigFile string
-	// Which preset launched osu! most recently; the replay watcher tags uploads with it.
-	SessionFile string
-	// Where .desktop entries go so app launchers pick them up.
-	ApplicationsDir string
-	// osu-winello installs `osu-wine` here (it honours $BINDIR the same way).
-	WinelloBinDir string
-	// Icon osu-winello installs for its own desktop entry.
-	WinelloIcon string
 	// osu-winello writes the osu! stable install path into this file.
 	WinelloOsuPathFile string
 	// Replays the watcher has already seen or uploaded.
@@ -48,18 +40,9 @@ func Resolve(getenv Getenv) Paths {
 	dataHome := xdg("XDG_DATA_HOME", ".local/share")
 	stateHome := xdg("XDG_STATE_HOME", ".local/state")
 
-	binDir := getenv("BINDIR")
-	if binDir == "" {
-		binDir = filepath.Join(home, ".local", "bin")
-	}
-
 	return Paths{
 		Home:               home,
 		ConfigFile:         filepath.Join(configHome, "kiai", "config.json"),
-		SessionFile:        filepath.Join(stateHome, "kiai", "session.json"),
-		ApplicationsDir:    filepath.Join(dataHome, "applications"),
-		WinelloBinDir:      binDir,
-		WinelloIcon:        filepath.Join(dataHome, "icons", "osu-wine.png"),
 		WinelloOsuPathFile: filepath.Join(dataHome, "osuconfig", "osupath"),
 		WatchStateFile:     filepath.Join(stateHome, "kiai", "watch.json"),
 		LazerExportsDir:    filepath.Join(dataHome, "osu", "exports"),

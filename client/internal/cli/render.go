@@ -11,7 +11,6 @@ import (
 	"github.com/dblopez04/kiai/client/internal/config"
 	"github.com/dblopez04/kiai/client/internal/fsutil"
 	"github.com/dblopez04/kiai/client/internal/kiaiapi"
-	"github.com/dblopez04/kiai/client/internal/launch"
 	"github.com/dblopez04/kiai/client/internal/paths"
 	"github.com/dblopez04/kiai/client/internal/songs"
 )
@@ -170,17 +169,15 @@ func renderCommand(args []string, io IO) (int, error) {
 		return 1, err
 	}
 
-	// A .osr doesn't record the server; assume the one osu! was last launched on.
+	// A .osr doesn't record the server; assume the configured one.
 	devserver := ""
 	switch {
 	case a.bools["official"]:
 	case a.strings["devserver"] != "":
 		devserver = NormalizeDevserver(a.strings["devserver"])
-	default:
-		if session := launch.ReadSession(p.SessionFile); session != nil && session.Devserver != nil {
-			devserver = *session.Devserver
-			fmt.Fprintf(io.Out, "Tagging it as played on %s (the last preset you launched; use --devserver or --official to change).\n", devserver)
-		}
+	case cfg.Devserver != "":
+		devserver = cfg.Devserver
+		fmt.Fprintf(io.Out, "Tagging it as played on %s (\"devserver\" in config.json; use --devserver or --official to change).\n", devserver)
 	}
 
 	client := kiaiapi.New(server.URL, server.Token)
