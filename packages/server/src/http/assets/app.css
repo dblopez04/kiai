@@ -135,6 +135,11 @@ table.kv td { padding: 0.25rem 0; }
 
 video.video { width: 100%; max-height: 75vh; background: #000; border-radius: 6px; }
 pre { white-space: pre-wrap; word-break: break-word; }
+.replaylist { display: grid; gap: 0.6rem; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); }
+.replaycard { display: flex; gap: 0.8rem; align-items: center; text-decoration: none; color: var(--text); padding: 0.6rem; }
+.replaycard:hover { border-color: var(--accent); }
+.replaycard img { width: 6rem; height: 4.2rem; object-fit: cover; border-radius: 6px; flex: none; }
+textarea { font: 0.9em/1.4 ui-monospace, monospace; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 0.5rem; width: 100%; }
 
 @media (max-width: 640px) {
   main { padding: 0.6rem; }

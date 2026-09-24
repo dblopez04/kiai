@@ -7,9 +7,10 @@ Tools for osu! players on Linux who run a homelab.
 | osu-winello presets with app-launcher shortcuts | **done** (client) |
 | Private score library: auto-synced scores, search/filter, local PP, CSV exports | **done** (server) |
 | Replay rendering with danser on the homelab GPU: `kiai render <file.osr>` | **done** (client + server) |
-| Automatic uploads from the replay watcher, Discord DM with the link | planned: phase 4 |
+| Replay watcher (systemd user service), Discord DM or webhook with the link | **done** (client + server) |
 | Render presets chosen by rules on the replay (mods, AR, server, ...) | planned: phase 5 |
-| Public replay pages and gallery (Caddy + Cloudflare Tunnel) | planned: phases 4 and 6; the gallery reuses the score library's filters |
+| Public replay pages with inline Discord video (Caddy + Cloudflare Tunnel) | **done** (server) |
+| Public gallery with the score library's filters | planned: phase 6 |
 | Map skillset checker | later, once it settles in its own repo |
 
 See [docs/architecture.md](docs/architecture.md) for the full design and roadmap.
@@ -49,7 +50,9 @@ Files:
 |---|---|
 | `~/.config/kiai/config.json` | Presets. Safe to hand-edit; run `preset sync` afterwards. `"osuWinePath"` overrides where `osu-wine` is found. |
 | `~/.local/share/applications/kiai-<name>.desktop` | Launcher entries. kiai only touches files it created (they carry `X-Kiai-Preset`). |
-| `~/.local/state/kiai/session.json` | The preset that last launched osu!. The replay watcher will use it to tag exports with a server, since `.osr` files don't record one. |
+| `~/.local/state/kiai/session.json` | The preset that last launched osu!. Uploads are tagged with its server, since `.osr` files don't record one. |
+| `~/.local/state/kiai/watch.json` | Replays the watcher has already uploaded, and renders it's following. |
+| `~/.config/systemd/user/kiai-watch.service` | The watcher service, written by `kiai watch install`. |
 
 The entries run `kiai launch <name>` rather than `osu-wine` directly so the session
 can be recorded first.
@@ -80,6 +83,24 @@ kiai render ~/.local/share/osu-wine/osu!/Replays/some-replay.osr
 - `--no-wait` returns straight after the upload. Uploading the same file again returns the
   existing replay.
 - `KIAI_SERVER_URL` and `KIAI_UPLOAD_TOKEN` override the saved server for one run.
+
+### Replay watcher
+
+The watcher uploads every replay you export, so you never run `kiai render` yourself:
+
+```sh
+kiai watch install     # a systemd user service that starts at login
+journalctl --user -u kiai-watch -f
+kiai watch uninstall
+```
+
+- It watches osu! stable's `Replays` folder (where F2 exports go; found through osu-winello) and
+  lazer's `~/.local/share/osu/exports`. Set `"watchDirs"` in `config.json` to watch others.
+- A replay is uploaded once osu! has finished writing it, tagged with the server of the preset
+  you launched last. The watcher then follows the render, uploads the map from your Songs folder
+  if the server needs it, and logs the link. With Discord set up on the server, you also get a DM.
+- Replays already there when the watcher first starts are skipped. `kiai watch --backlog` (run by
+  hand) uploads them too.
 
 ## Server
 
@@ -175,7 +196,36 @@ How a render goes:
   A render still running after `RENDER_TIMEOUT_MINUTES` is stopped.
 
 Rendered replays are listed at <http://localhost:8080/replays> (private, like the score library),
-where you can watch or download them and render again. Public replay pages come in phase 4.
+where you can watch or download them and render again.
+
+### Public replay pages and Discord
+
+Replay pages are the only public part. They're a separate app (`server public`, the `public`
+service) on its own port, 8081, with no route into the score library. It shows only replays
+that have a finished render: `/r/<id>` (video, map, mods, accuracy, pp), `/r/<id>/video.mp4` (with
+byte ranges), and a list of recent renders at `/`. The pages carry `og:video` tags, so a link
+posted in Discord plays inline.
+
+To put it online through Cloudflare Tunnel:
+
+1. In Cloudflare Zero Trust, create a tunnel and give it a public hostname (e.g.
+   `replays.example.com`) whose service is `http://caddy:80`.
+2. In `.env`, set `TUNNEL_TOKEN` and `PUBLIC_URL=https://replays.example.com`.
+3. `docker compose --profile tunnel up -d`. cloudflared forwards to Caddy (`deploy/Caddyfile`), and
+   Caddy proxies to the public app only.
+
+Cloudflare's terms restrict serving lots of video through its proxy. A few personal replay links
+are low volume, but it's a gray area.
+
+Notifications: when a render finishes or fails, the render worker posts to Discord. Configure one
+of these in `.env`:
+- **DM:** `DISCORD_BOT_TOKEN` and `DISCORD_USER_ID`. Create a bot in the Discord developer portal and
+  add it to any server you're in; bots can only DM people they share a server with.
+- **Webhook:** `DISCORD_WEBHOOK_URL`, for a channel (e.g. a private one on your own server).
+
+The message is the public link (which Discord turns into a playable video) plus an embed with the
+map, grade, accuracy, combo, pp and mods. pp is osu!'s when the play is in the score library,
+otherwise rosu-pp's estimate (marked `*`).
 
 ### Commands
 
@@ -185,6 +235,7 @@ server sync --mode history         # queue a job (recent, history, refresh; rese
 server export --out scores.csv
 server worker --once               # process one queued job and exit
 server render-worker [--once]      # the render worker (what the render containers run)
+server public                      # the public replay pages on PUBLIC_PORT
 ```
 
 ### HTTP API

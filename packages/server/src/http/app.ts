@@ -25,7 +25,7 @@ export interface AppDeps {
   player: Player;
   /** Where uploaded replays, videos and beatmaps live. */
   media: MediaPaths;
-  config: Pick<Config, "RECENT_WINDOW_HOURS" | "PRIVATE_HOSTS" | "UPLOAD_TOKEN">;
+  config: Pick<Config, "RECENT_WINDOW_HOURS" | "PRIVATE_HOSTS" | "UPLOAD_TOKEN" | "PUBLIC_URL">;
 }
 
 const ASSETS: Record<string, { type: string; body: string }> = {
@@ -70,7 +70,7 @@ export function createApp(deps: AppDeps): Hono {
     return c.body(asset.body, 200, { "Content-Type": asset.type, "Cache-Control": "no-cache" });
   });
 
-  registerReplayRoutes(app, { sql, player, media: deps.media, uploadToken: deps.config.UPLOAD_TOKEN });
+  registerReplayRoutes(app, { sql, player, media: deps.media, uploadToken: deps.config.UPLOAD_TOKEN, publicUrl: deps.config.PUBLIC_URL });
 
   async function queue(mode: SyncMode, trigger: "manual" | "api", windowHours?: number) {
     if (!deps.osu) throw new UserError("Imports need OSU_CLIENT_ID and OSU_CLIENT_SECRET to be configured.");

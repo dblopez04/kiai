@@ -53,6 +53,49 @@ services:
     volumes:
       - data:/app/data
 
+  # The public replay app: replay pages and videos only, on its own port. It's published on this
+  # machine for testing; the tunnel reaches it through Caddy, never the private port above.
+  public:
+    build: .
+    command: ["public"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://kiai:${POSTGRES_PASSWORD}@postgres:5432/kiai
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - data:/app/data:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
+      interval: 30s
+      timeout: 5s
+
+  # `docker compose --profile tunnel up -d`: Cloudflare Tunnel → Caddy → the public app.
+  # In the tunnel's settings on Cloudflare, point your public hostname at http://caddy:80.
+  caddy:
+    image: docker.io/library/caddy:2.11-alpine
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    depends_on:
+      - public
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+  cloudflared:
+    image: docker.io/cloudflare/cloudflared:2026.9.1
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      - caddy
+
   # Needs the NVIDIA driver and nvidia-container-toolkit on the host. danser draws with Mesa under
   # Xvfb; its ffmpeg encodes on the GPU (RENDER_ENCODER, default h264_nvenc).
   render:
@@ -80,3 +123,4 @@ services:
 volumes:
   pgdata:
   data:
+  caddy-data:

@@ -44,6 +44,10 @@ Usage:
       --osz <file>          Also upload the beatmap set it was played on
       --songs <dir>         osu! Songs folder, searched when the server can't download the map
       --no-wait             Upload and return without waiting for the render
+  kiai watch [--backlog]             Upload every replay you export (F2 in osu! stable, or lazer's
+                                     export) and follow its render; --backlog also uploads old ones
+  kiai watch install                 Run the watcher as a systemd user service, starting at login
+  kiai watch uninstall               Stop and remove that service
   kiai help | --help | --version
 
 Example:
@@ -99,6 +103,8 @@ func dispatch(args []string, io IO) (int, error) {
 		return 0, serverCommand(args[1:], io)
 	case "render":
 		return renderCommand(args[1:], io)
+	case "watch":
+		return watchCommand(args[1:], io)
 	default:
 		return 1, fmt.Errorf("Unknown command %q. Run \"kiai help\" for usage.", args[0])
 	}

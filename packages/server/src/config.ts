@@ -57,6 +57,26 @@ const envSchema = z.object({
   RENDER_TIMEOUT_MINUTES: z.coerce.number().positive().default(60),
   /** Run danser under xvfb-run, since it needs an X display even when recording. */
   RENDER_XVFB: flag.default(true),
+
+  // ---------- public replay pages and notifications ----------
+
+  /** The public replay app's address as viewers see it, e.g. https://replays.example.com. Used in links and embeds. */
+  PUBLIC_URL: z
+    .string()
+    .trim()
+    .regex(/^https?:\/\/[^/?#\s]+$/, "expected an address such as https://replays.example.com, without a path")
+    .optional(),
+  /** Port of the public replay app (`server public`). Only this port is ever routed to the tunnel. */
+  PUBLIC_PORT: z.coerce.number().int().min(1).max(65535).default(8081),
+  /** Discord: a DM from a bot that shares a server with you (both needed)... */
+  DISCORD_BOT_TOKEN: z.string().trim().min(1).optional(),
+  DISCORD_USER_ID: z.string().trim().regex(/^\d{15,22}$/, "expected your Discord user id (Developer Mode → Copy User ID)").optional(),
+  /** ...or a webhook into a (private) channel. */
+  DISCORD_WEBHOOK_URL: z
+    .string()
+    .trim()
+    .regex(/^https:\/\/(discord\.com|discordapp\.com|canary\.discord\.com)\/api\/webhooks\/\d+\/[\w-]+$/, "expected a Discord webhook URL")
+    .optional(),
 });
 
 export type Config = z.infer<typeof envSchema>;

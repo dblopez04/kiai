@@ -8,6 +8,7 @@ import { sqlJson, type Sql } from "../db/index.ts";
 import { UserError } from "../errors.ts";
 import type { MediaPaths } from "../media.ts";
 import { normalizeMods, type ScoreMod } from "../scores/mods.ts";
+import type { ReplayAttributes } from "./attributes.ts";
 import { parseReplay, replayAccuracy, replayRank } from "./osr.ts";
 
 // No 0/1/l/o, so ids read back unambiguously.
@@ -159,6 +160,10 @@ export interface ReplayView {
   online_score_id: number | null;
   /** The matching play in the score library. */
   score_id: number | null;
+  /** Official pp of the linked play, when osu! gives it. */
+  score_pp: number | null;
+  /** The map with this play's mods applied, once the render worker has the map. */
+  attributes: ReplayAttributes | null;
   render: RenderView | null;
 }
 
@@ -203,6 +208,8 @@ function toReplayView(row: Row): ReplayView {
     uploaded_at: iso(row.uploaded_at)!,
     online_score_id: (row.online_score_id as number) || null,
     score_id: row.score_id as number | null,
+    score_pp: (row.score_pp as number | null) ?? null,
+    attributes: (row.attributes as ReplayAttributes | null) ?? null,
     render: job
       ? {
           id: job.id as number,
@@ -221,9 +228,10 @@ function toReplayView(row: Row): ReplayView {
 }
 
 const SELECT = `
-  select r.*, to_jsonb(b) as beatmap, to_jsonb(f) as beatmap_file, to_jsonb(j) as render
+  select r.*, to_jsonb(b) as beatmap, to_jsonb(f) as beatmap_file, to_jsonb(j) as render, s.pp as score_pp
   from replays r
   left join beatmaps b on b.id = r.beatmap_id
+  left join scores s on s.id = r.score_id
   left join beatmap_files f on f.md5 = r.beatmap_md5
   left join lateral (select * from render_jobs where replay_id = r.id order by id desc limit 1) j on true`;
 

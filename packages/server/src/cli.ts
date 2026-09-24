@@ -8,11 +8,13 @@ import { loadConfig, requireOsuCredentials, requireOsuUser, type Config, type En
 import { connectDb, migrate, type Sql } from "./db/index.ts";
 import { UserError } from "./errors.ts";
 import { createApp } from "./http/app.ts";
+import { createPublicApp } from "./http/public.ts";
 import { ensureMediaDirs, mediaPaths } from "./media.ts";
 import { OsuApi, type OsuClient } from "./osu/api.ts";
 import { RateLimiter } from "./osu/rate-limit.ts";
 import { resolvePlayer, type Player } from "./player.ts";
 import { danserRenderer } from "./render/danser.ts";
+import { discordNotifier } from "./render/notify.ts";
 import { runRenderWorker } from "./render/worker.ts";
 import { scoreCsv } from "./scores/csv.ts";
 import { createPpCalculator, type PpCalculator } from "./scores/pp.ts";
@@ -27,6 +29,7 @@ Usage:
   server web                    Private web UI and API only
   server worker [--once]        Sync worker only (--once: at most one job, then exit)
   server render-worker [--once] Render worker: runs danser on uploaded replays (the render container)
+  server public                 Public replay pages on PUBLIC_PORT (the only port to expose)
   server migrate                Apply database migrations
   server sync [--mode recent|history|refresh|reset] [--confirm RESET]
                                 Queue a sync for OSU_USER (default: recent). The worker runs it.
@@ -209,10 +212,30 @@ async function dispatch(command: string, args: string[], rt: Runtime, io: Io): P
       });
       rt.log(`render worker started: ${config.RENDER_CONCURRENCY} slot(s), encoder ${config.RENDER_ENCODER}, danser in ${config.DANSER_DIR}`);
       if (!rt.osuOrNull()) rt.log("no osu! credentials: only beatmaps already on disk or uploaded can be rendered");
+      const notifier = discordNotifier({
+        botToken: config.DISCORD_BOT_TOKEN,
+        userId: config.DISCORD_USER_ID,
+        webhookUrl: config.DISCORD_WEBHOOK_URL,
+        publicUrl: config.PUBLIC_URL,
+      });
+      rt.log(notifier ? `Discord notifications on (${config.DISCORD_BOT_TOKEN && config.DISCORD_USER_ID ? "DM" : "webhook"})` : "Discord notifications off");
       await runRenderWorker(
-        { sql: rt.sql, osu: rt.osuOrNull(), paths: media, renderer, mirrors: config.MAP_MIRRORS, playerId: player.id, log: rt.log },
+        { sql: rt.sql, osu: rt.osuOrNull(), paths: media, renderer, mirrors: config.MAP_MIRRORS, playerId: player.id, notifier, log: rt.log },
         { concurrency: config.RENDER_CONCURRENCY, once: values.once ?? false, signal: controller.signal },
       );
+      rt.log("stopped");
+      return 0;
+    }
+
+    case "public": {
+      parse(args, {});
+      await migrate(rt.sql);
+      const app = createPublicApp({ sql: rt.sql, media: mediaPaths(rt.config.DATA_DIR), publicUrl: rt.config.PUBLIC_URL });
+      const controller = stopSignal();
+      const server = serveHttp({ fetch: app.fetch, port: rt.config.PUBLIC_PORT, hostname: rt.config.HOST });
+      rt.log(`public replay pages listening on http://${rt.config.HOST}:${rt.config.PUBLIC_PORT}${rt.config.PUBLIC_URL ? ` (${rt.config.PUBLIC_URL})` : ""}`);
+      await new Promise<void>((resolve) => controller.signal.addEventListener("abort", () => resolve(), { once: true }));
+      await new Promise<void>((resolve) => server.close(() => resolve()));
       rt.log("stopped");
       return 0;
     }

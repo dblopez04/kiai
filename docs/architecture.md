@@ -8,10 +8,12 @@ later also a systemd user service.
 - Presets and `.desktop` entries (done).
 - `kiai render <file.osr>` (done): uploads a replay, waits for the render, and uploads the map
   from the local Songs folder when the server can't get it.
-- Replay watcher (phase 3). osu! stable writes exported replays (F2) to `<osu path>/Replays/`,
-  and osu-winello records the osu! path in `~/.local/share/osuconfig/osupath`. lazer
-  writes exports to its `exports/` folder. The watcher uploads each new `.osr` with a
-  token and tags it with the server from `session.json`.
+- Replay watcher (done): `kiai watch`, installed as a systemd user unit by `kiai watch install`.
+  osu! stable writes exported replays (F2) to `<osu path>/Replays/`, and osu-winello records the
+  osu! path in `~/.local/share/osuconfig/osupath`. lazer writes exports to
+  `~/.local/share/osu/exports`. The watcher polls both every 3 s (a file is uploaded once its size
+  holds still), uploads each new `.osr` with the token, tags it with the server from
+  `session.json`, and follows the render, uploading the map when the server asks for it.
 
 **Server** (`packages/server`): docker compose on the homelab.
 
@@ -20,9 +22,9 @@ later also a systemd user service.
 | `server` | Private score library UI + API on :8080, and the score sync worker (`serve` runs both; `web` / `worker` split them) | done |
 | `postgres` | Scores, metadata and the job queues | done |
 | `render` / `render-cpu` | danser + Xvfb (`render.Dockerfile`), compose profiles `nvidia` and `cpu`; runs `render-worker` | done |
-| public replay app | Replay pages and gallery only, on its own port (separate Hono app) | phase 4 |
-| `caddy` | Routes the public hostname to the replay app only; serves mp4s with range requests | phase 4 |
-| `cloudflared` | Tunnel, configured with a single `TUNNEL_TOKEN` | phase 4 |
+| `public` | The public replay app (`http/public.ts`, `server public`): replay pages and videos only, on :8081 | done |
+| `caddy` | Profile `tunnel`: proxies everything it gets to the public app (`deploy/Caddyfile`) | done |
+| `cloudflared` | Profile `tunnel`: Cloudflare Tunnel with a single `TUNNEL_TOKEN`, hostname → `http://caddy:80` | done |
 
 ### Public vs private
 
@@ -39,7 +41,7 @@ login, so it relies on never being reachable from outside:
 
   A misrouted tunnel fails closed, and DNS-rebinding and cross-site requests from your own
   browser are blocked.
-- The replay app will share the database but never mount the private routes (`http/app.ts`).
+- The replay app (`http/public.ts`) shares the database but never mounts the private routes (`http/app.ts`).
   It may reuse the filter module (`scores/query.ts`), but only for its own queries, which
   return rows that have a rendered replay.
 
@@ -144,8 +146,9 @@ What the code relies on from danser 0.11's source:
 3. **Done:** render MVP: upload endpoint, map fetching, render container, one hard-coded
    preset; `kiai render <file.osr>` by hand. Each replay is linked to its `scores` row when
    osu! has the score, so the gallery can filter replays with `scores/query.ts`.
-4. Replay watcher (systemd user unit), Discord notification, the public replay app on its
-   own port, Caddy and cloudflared.
+4. **Done:** replay watcher (systemd user unit), Discord notification (bot DM or webhook),
+   the public replay app on its own port, Caddy and cloudflared. Replays also get their
+   mod-adjusted attributes (`replays/attributes.ts`, rosu-pp), step 3 of the pipeline.
 5. Render presets and rules, skin uploads, editor UI.
 6. Gallery with the score library's filters.
 7. Later: the skillset checker, once it settles in its own repo.

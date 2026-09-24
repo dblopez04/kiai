@@ -30,7 +30,7 @@ export const fmt = {
 
 const RANK_LABEL: Record<string, string> = { XH: "SS", X: "SS", SH: "S" };
 export const rankLabel = (rank: string) => RANK_LABEL[rank] ?? rank;
-const rankClass = (rank: string) => `rank rank-${rank.toLowerCase()}`;
+export const rankClass = (rank: string) => `rank rank-${rank.toLowerCase()}`;
 
 const mapTitle = (s: ScoreView) => `${s.beatmap.artist ?? "Unknown artist"} - ${s.beatmap.title ?? "Unknown title"}`;
 
@@ -409,7 +409,7 @@ export function replaysPage(replays: readonly ReplayView[], player: Player, noti
   );
 }
 
-export function replayPage(r: ReplayView, player: Player): Html {
+export function replayPage(r: ReplayView, player: Player, publicUrl?: string): Html {
   const job = r.render;
   const row = (label: string, value: unknown) => html`<tr><th>${label}</th><td>${value}</td></tr>`;
   const canRetry = !job || job.status === "failed" || job.status === "needs_map" || job.status === "success";
@@ -452,6 +452,7 @@ export function replayPage(r: ReplayView, player: Player): Html {
         ${job?.error ? html`<pre class="alert small">${job.error}</pre>` : ""}
         ${job?.status === "needs_map" ? html`<p>Run <code>kiai render</code> on the PC you played on again: it uploads the map from your Songs folder.</p>` : ""}
         ${job?.video_url ? html`<p><a href="${job.video_url}" download="${r.id}.mp4">Download video</a></p>` : ""}
+        ${job?.status === "success" && publicUrl ? html`<p>Public page: <a href="${publicUrl}/r/${r.id}" target="_blank" rel="noopener noreferrer">${publicUrl}/r/${r.id}</a></p>` : ""}
         ${canRetry ? html`<form method="post" action="/replays/${r.id}/render"><button>${job ? "Render again" : "Render"}</button></form>` : ""}
       </section>
     </div>`,

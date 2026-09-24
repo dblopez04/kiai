@@ -42,9 +42,12 @@ type Config struct {
 	// Overrides where `osu-wine` is looked up.
 	OsuWinePath string `json:"osuWinePath,omitempty"`
 	// Overrides the osu! Songs folder searched for maps no mirror has (default: <osu! path>/Songs).
-	SongsDir string   `json:"songsDir,omitempty"`
-	Server   *Server  `json:"server,omitempty"`
-	Presets  []Preset `json:"presets"`
+	SongsDir string `json:"songsDir,omitempty"`
+	// Folders the replay watcher checks for new .osr files (default: osu! stable's Replays folder
+	// and lazer's exports folder).
+	WatchDirs []string `json:"watchDirs,omitempty"`
+	Server    *Server  `json:"server,omitempty"`
+	Presets   []Preset `json:"presets"`
 }
 
 func Empty() Config {

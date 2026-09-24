@@ -6,7 +6,6 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
 import type { Context, Hono } from "hono";
 import type { Sql } from "../db/index.ts";
 import { UserError } from "../errors.ts";
@@ -16,6 +15,7 @@ import { installOsz, MAX_OSZ_BYTES, writeStreamLimited } from "../render/maps.ts
 import { DEFAULT_PRESET } from "../render/preset.ts";
 import { enqueueRender, requeueWaitingFor } from "../render/queue.ts";
 import { getReplay, linkReplays, listReplays, normalizeDevserver, saveReplay } from "../replays/store.ts";
+import { sendFile } from "./files.ts";
 import { replayPage, replaysPage } from "./views.ts";
 
 const MAX_OSR_BYTES = 32 * 1024 * 1024;
@@ -26,6 +26,8 @@ export interface ReplayRouteDeps {
   player: Player;
   media: MediaPaths;
   uploadToken: string | undefined;
+  /** Where the public replay app is reached, to link each replay's public page. */
+  publicUrl: string | undefined;
 }
 
 class HttpError extends Error {
@@ -59,34 +61,6 @@ async function readBody(c: Context, limit: number, what: string): Promise<Buffer
     chunks.push(Buffer.from(chunk));
   }
   return Buffer.concat(chunks);
-}
-
-/** Serve a file with byte-range support, which browsers and Discord need to seek in videos. */
-async function sendFile(c: Context, file: string, type: string): Promise<Response> {
-  const stat = await fs.stat(file).catch(() => null);
-  if (!stat?.isFile()) return c.json({ error: "The video file is missing." }, 404);
-  const headers: Record<string, string> = { "Content-Type": type, "Accept-Ranges": "bytes", ...PRIVATE };
-  const range = /^bytes=(\d*)-(\d*)$/.exec(c.req.header("range") ?? "");
-  let start = 0;
-  let end = stat.size - 1;
-  let status = 200;
-  if (range && (range[1] || range[2])) {
-    if (range[1]) {
-      start = Number(range[1]);
-      if (range[2]) end = Math.min(Number(range[2]), end);
-    } else {
-      start = Math.max(0, stat.size - Number(range[2]));
-    }
-    if (start > end || start >= stat.size) {
-      return new Response(null, { status: 416, headers: { ...headers, "Content-Range": `bytes */${stat.size}` } });
-    }
-    status = 206;
-    headers["Content-Range"] = `bytes ${start}-${end}/${stat.size}`;
-  }
-  headers["Content-Length"] = String(end - start + 1);
-  if (c.req.method === "HEAD") return new Response(null, { status, headers });
-  const stream = Readable.toWeb(createReadStream(file, { start, end })) as ReadableStream<Uint8Array>;
-  return new Response(stream, { status, headers });
 }
 
 export function registerReplayRoutes(app: Hono, deps: ReplayRouteDeps): void {
@@ -175,7 +149,7 @@ export function registerReplayRoutes(app: Hono, deps: ReplayRouteDeps): void {
 
   app.get("/replays", async (c) => c.html(replaysPage(await listReplays(sql), player, c.req.query("notice")), 200, PRIVATE));
 
-  app.get("/replays/:id", (c) => guard(c, async () => c.html(replayPage(await replayOr404(c), player), 200, PRIVATE)));
+  app.get("/replays/:id", (c) => guard(c, async () => c.html(replayPage(await replayOr404(c), player, deps.publicUrl), 200, PRIVATE)));
 
   app.post("/replays/:id/render", (c) =>
     guard(c, async () => {
@@ -191,7 +165,7 @@ export function registerReplayRoutes(app: Hono, deps: ReplayRouteDeps): void {
       const [job] = await sql<{ video_path: string }[]>`
         select video_path from render_jobs where replay_id = ${replay.id} and status = 'success' order by id desc limit 1`;
       if (!job) throw new HttpError(404, "This replay hasn't been rendered yet.");
-      return sendFile(c, path.join(media.root, job.video_path), "video/mp4");
+      return sendFile(c, path.join(media.root, job.video_path), "video/mp4", PRIVATE["Cache-Control"]);
     }),
   );
 }
