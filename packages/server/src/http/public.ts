@@ -1,7 +1,7 @@
-// The public replay app: rendered replay pages and their videos, nothing else. It runs on its own
-// port (PUBLIC_PORT), which is the only one Caddy and the tunnel ever reach. It shares the
-// database with the private app but never mounts its routes, and shows only replays that have a
-// finished render.
+// The public replay app: rendered replay pages, their videos, and a gallery searched with the score
+// library's filters, nothing else. It runs on its own port (PUBLIC_PORT), which is the only one
+// Caddy and the tunnel ever reach. It shares the database with the private app but never mounts its
+// routes, and shows only replays that have a finished render.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -10,9 +10,11 @@ import { html } from "hono/html";
 import type { Sql } from "../db/index.ts";
 import type { MediaPaths } from "../media.ts";
 import { displayPp, playSummary, publicReplayUrl, replayTitle } from "../render/notify.ts";
+import { listGallery, type GalleryPage } from "../replays/gallery.ts";
 import { getReplay, type ReplayView } from "../replays/store.ts";
+import { DEFAULT_FILTERS, filtersToParams, parseScoreFilters, type ScoreFilters } from "../scores/query.ts";
 import { sendFile } from "./files.ts";
-import { fmt, modChips, rankClass, rankLabel } from "./views.ts";
+import { filterForm, fmt, modChips, rankClass, rankLabel } from "./views.ts";
 
 type Html = ReturnType<typeof html>;
 
@@ -24,11 +26,13 @@ export interface PublicAppDeps {
 }
 
 const CSS = fs.readFileSync(new URL("./assets/app.css", import.meta.url), "utf8");
+// Only the gallery's mod filter buttons use it; its other parts need elements this app never shows.
+const JS = fs.readFileSync(new URL("./assets/app.js", import.meta.url), "utf8");
 const PAGE_CACHE = "public, max-age=60";
 const VIDEO_CACHE = "public, max-age=86400";
 const SECURITY_HEADERS = {
   "Content-Security-Policy":
-    "default-src 'none'; style-src 'self'; img-src 'self' https://assets.ppy.sh; media-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' https://assets.ppy.sh; media-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
 };
@@ -41,6 +45,7 @@ function layout(title: string, head: Html | string, body: Html): Html {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title} · kiai</title>
 <link rel="stylesheet" href="/assets/app.css">
+<script src="/assets/app.js" defer></script>
 ${head}
 </head>
 <body>
@@ -53,16 +58,32 @@ ${head}
 function card(r: ReplayView): Html {
   return html`<a class="card replaycard" href="/r/${r.id}">
     ${r.beatmap?.cover_url ? html`<img src="${r.beatmap.cover_url.replace("cover.jpg", "list@2x.jpg")}" alt="" loading="lazy">` : ""}
-    <span><strong>${replayTitle(r)}</strong><br><span class="muted small">${playSummary(r)} · ${r.player_name}</span></span>
+    <span><strong>${replayTitle(r)}</strong><br><span class="muted small">${playSummary(r)} · ${r.player_name} · ${fmt.date(r.played_at)}</span></span>
   </a>`;
 }
 
-function homePage(replays: readonly ReplayView[]): Html {
+function galleryPage(f: ScoreFilters, page: GalleryPage): Html {
+  const { replays, pagination } = page;
+  const { sort, order, pageSize } = DEFAULT_FILTERS;
+  const filtered = filtersToParams(f, { page: 1, sort, order, pageSize }).size > 0;
+  const link = (p: number) => `/?${filtersToParams(f, { page: p }).toString()}`;
   return layout(
     "Replays",
     "",
-    html`<section class="card"><h1>Replays</h1>
-      ${replays.length ? html`<div class="replaylist">${replays.map(card)}</div>` : html`<p class="muted">Nothing rendered yet.</p>`}
+    html`${filterForm(f, { action: "/" })}
+    <section class="card" aria-label="Replays">
+      <h1>Replays <span class="muted small">${fmt.number(pagination.total_count)}${filtered ? " match" : ""}</span></h1>
+      ${replays.length
+        ? html`<div class="replaylist">${replays.map(card)}</div>
+          ${replays.some((r) => r.score_pp === null && r.attributes) ? html`<p class="muted small">* pp estimated with rosu-pp.</p>` : ""}`
+        : html`<p class="muted">${filtered ? "No replays match these filters." : "Nothing rendered yet."}</p>`}
+      ${pagination.total_pages > 1
+        ? html`<nav class="pager">
+            ${pagination.page > 1 ? html`<a href="${link(pagination.page - 1)}">← Previous</a>` : html`<span></span>`}
+            <span>Page ${pagination.page} of ${fmt.number(pagination.total_pages)}</span>
+            ${pagination.page < pagination.total_pages ? html`<a href="${link(pagination.page + 1)}">Next →</a>` : html`<span></span>`}
+          </nav>`
+        : ""}
     </section>`,
   );
 }
@@ -123,16 +144,6 @@ ${r.beatmap?.cover_url ? html`<meta property="og:image" content="${r.beatmap.cov
   );
 }
 
-/** Replays with a finished render, newest first. */
-async function renderedReplays(sql: Sql, limit: number): Promise<ReplayView[]> {
-  const rows = await sql<{ id: string }[]>`
-    select r.id from replays r
-    where exists (select 1 from render_jobs j where j.replay_id = r.id and j.status = 'success')
-    order by r.uploaded_at desc limit ${limit}`;
-  const views = await Promise.all(rows.map((row) => getReplay(sql, row.id)));
-  return views.filter((view): view is ReplayView => view !== null);
-}
-
 export function createPublicApp(deps: PublicAppDeps): Hono {
   const { sql, media } = deps;
   const app = new Hono();
@@ -150,8 +161,12 @@ export function createPublicApp(deps: PublicAppDeps): Hono {
 
   app.get("/healthz", (c) => c.text("ok"));
   app.get("/assets/app.css", (c) => c.body(CSS, 200, { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "public, max-age=3600" }));
+  app.get("/assets/app.js", (c) => c.body(JS, 200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=3600" }));
 
-  app.get("/", async (c) => c.html(homePage(await renderedReplays(sql, 30)), 200, { "Cache-Control": PAGE_CACHE }));
+  app.get("/", async (c) => {
+    const filters = parseScoreFilters(new URL(c.req.url).searchParams);
+    return c.html(galleryPage(filters, await listGallery(sql, filters)), 200, { "Cache-Control": PAGE_CACHE });
+  });
 
   /** The replay, if it has a finished render; otherwise it doesn't exist as far as the public knows. */
   const rendered = async (id: string) => {

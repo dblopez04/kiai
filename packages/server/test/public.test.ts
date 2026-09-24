@@ -10,10 +10,14 @@ import { discordNotifier, renderedMessage } from "../src/render/notify.ts";
 import { enqueueRender } from "../src/render/queue.ts";
 import { runNextRender } from "../src/render/worker.ts";
 import { replayAttributes } from "../src/replays/attributes.ts";
+import { listGallery } from "../src/replays/gallery.ts";
 import { getReplay, saveReplay } from "../src/replays/store.ts";
+import { parseScoreFilters } from "../src/scores/query.ts";
+import { beatmapRow } from "../src/scores/rows.ts";
+import { upsertBeatmaps } from "../src/scores/store.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
-import { fakeOsu, osuFile, trackUser, USER_ID } from "./helpers/fake-osu.ts";
-import { buildOsr, buildZip, md5Of } from "./helpers/replay-files.ts";
+import { beatmap, fakeOsu, osuFile, trackUser, USER_ID } from "./helpers/fake-osu.ts";
+import { buildOsr, buildZip, md5Of, type OsrOptions } from "./helpers/replay-files.ts";
 
 let db: TestDb;
 let dir: string;
@@ -167,5 +171,93 @@ describe("public replay app", () => {
       expect((await app().request(privatePath)).status, privatePath).toBe(404);
     }
     expect((await app().request("/api/replays", { method: "POST" })).status).toBe(405);
+  });
+});
+
+describe("replay gallery", () => {
+  const ids: Record<string, string> = {};
+  const keyOf = (id: string) => Object.entries(ids).find(([, value]) => value === id)?.[0] ?? id;
+  const find = async (query: string) => (await listGallery(db.sql, parseScoreFilters(new URLSearchParams(query)))).replays.map((r) => keyOf(r.id));
+  const findSorted = async (query: string) => (await find(query)).sort();
+
+  let nextScoreId = 7_000_000_000;
+  /** A replay with a finished render, optionally on a known map and linked to a library play with this pp. */
+  async function seed(key: string, osr: OsrOptions, link: { beatmapId?: number; scorePp?: number } = {}) {
+    const { id } = await saveReplay(db.sql, media, buildOsr({ beatmapMd5: md5Of(key), ...osr }), null);
+    await db.sql`insert into render_jobs (replay_id, preset, status, video_path) values (${id}, 'default', 'success', ${`videos/${id}.mp4`})`;
+    if (link.beatmapId) await db.sql`update replays set beatmap_id = ${link.beatmapId} where id = ${id}`;
+    if (link.scorePp !== undefined) {
+      const scoreId = nextScoreId++;
+      await db.sql`insert into scores (id, user_id, beatmap_id, ended_at, rank, accuracy, total_score, max_combo, pp)
+        values (${scoreId}, ${USER_ID}, ${link.beatmapId!}, now(), 'S', 1, 1, 1, ${link.scorePp})`;
+      await db.sql`update replays set score_id = ${scoreId} where id = ${id}`;
+    }
+    ids[key] = id;
+  }
+
+  beforeEach(async () => {
+    await upsertBeatmaps(db.sql, [beatmapRow(beatmap(1))!, beatmapRow(beatmap(2, { status: "loved", difficulty_rating: 7 }))!]);
+    // Rendered through the pipeline: DT on a map osu! doesn't know, pp estimated by rosu-pp.
+    ids.dt = await renderedReplay();
+    await db.sql`update replays set played_at = '2026-09-01T00:00:00Z' where id = ${ids.dt}`;
+    await seed("hdhr", { modBits: 8 | 16, counts: [500, 0, 0, 0, 0, 0], playedAt: new Date("2026-09-05T00:00:00Z") }, { beatmapId: 1, scorePp: 300 });
+    await seed("nm", { counts: [90, 10, 0, 0, 0, 0], playedAt: new Date("2026-09-04T00:00:00Z") }, { beatmapId: 1, scorePp: 200 });
+    await seed("nc", { modBits: 64 | 512, playedAt: new Date("2026-09-03T00:00:00Z") }, { beatmapId: 2 });
+    await seed("friend", { playerName: "friend", playedAt: new Date("2026-09-02T00:00:00Z") }, { beatmapId: 1 });
+
+    // Never shown: not rendered yet, or being rendered again.
+    const queued = await saveReplay(db.sql, media, buildOsr({ beatmapMd5: md5Of("queued") }), null);
+    await enqueueRender(db.sql, queued.id, "default");
+    await seed("rerendering", {});
+    await enqueueRender(db.sql, ids.rerendering!, "default");
+  });
+
+  it("lists rendered replays from every player, newest play first", async () => {
+    expect(await find("")).toEqual(["hdhr", "nm", "nc", "friend", "dt"]);
+    expect(await find("order=asc")).toEqual(["dt", "friend", "nc", "nm", "hdhr"]);
+    expect((await find("sort=pp"))[0]).toBe("hdhr");
+  });
+
+  it("filters with the score library's filters", async () => {
+    expect(await findSorted("q=public song")).toEqual(["dt"]); // title from the .osu file
+    expect(await findSorted("q=title 1")).toEqual(["friend", "hdhr", "nm"]);
+    expect(await findSorted("mods=DT")).toEqual(["dt", "nc"]); // DT also matches NC
+    expect(await findSorted("mods=DT&mods_exact=true")).toEqual(["dt"]);
+    expect(await findSorted("mods_excluded=HR")).toEqual(["dt", "friend", "nc", "nm"]);
+    expect(await findSorted("nomod=true")).toEqual(["friend", "nm"]);
+    expect(await findSorted("rank=SS")).toEqual(["hdhr"]); // XH
+    expect(await findSorted("rank=A")).toEqual(["nm"]);
+    expect(await findSorted("min_pp=250")).toEqual(["hdhr"]);
+    expect(await findSorted("min_pp=1")).toEqual(["dt", "hdhr", "nm"]); // osu!'s pp, else the estimate
+    expect(await findSorted("min_stars=6")).toEqual(["nc"]); // unknown maps have no stars
+    expect(await findSorted("status=loved")).toEqual(["nc"]);
+    expect(await findSorted("min_rate=1.5")).toEqual(["dt", "nc"]);
+    expect(await findSorted("beatmap_id=1")).toEqual(["friend", "hdhr", "nm"]);
+    expect(await findSorted("date_from=2026-09-03T12:00:00Z")).toEqual(["hdhr", "nm"]);
+  });
+
+  it("keeps the best replay per map, and pages", async () => {
+    const best = await listGallery(db.sql, parseScoreFilters(new URLSearchParams("best_only=true&sort=pp")));
+    expect(best.replays.map((r) => keyOf(r.id))).toEqual(["hdhr", "dt", "nc"]);
+    expect(best.pagination.total_count).toBe(3);
+
+    const page2 = await listGallery(db.sql, parseScoreFilters(new URLSearchParams("page_size=2&page=2")));
+    expect(page2.replays.map((r) => keyOf(r.id))).toEqual(["nc", "friend"]);
+    expect(page2.pagination).toEqual({ page: 2, page_size: 2, total_count: 5, total_pages: 3 });
+  });
+
+  it("is the public home page", async () => {
+    const app = createPublicApp({ sql: db.sql, media });
+    const page = await app.request("/?mods=DT&page_size=1&sort=pp");
+    expect(page.status).toBe(200);
+    const body = await page.text();
+    expect(body).toContain('<input type="hidden" name="mods" value="DT">');
+    expect(body).toContain(`/r/${ids.dt}`); // the estimate beats nc's missing pp
+    expect(body).not.toContain(`/r/${ids.nc}`); // page 2
+    expect(body).not.toContain(`/r/${ids.hdhr}`);
+    expect(body).toContain('href="/?sort=pp&amp;page=2&amp;page_size=1&amp;mods=DT"');
+    expect(page.headers.get("content-security-policy")).toContain("form-action 'self'");
+    expect(await (await app.request("/?q=nothing-like-this")).text()).toContain("No replays match these filters.");
+    expect((await app.request("/assets/app.js")).headers.get("content-type")).toContain("javascript");
   });
 });

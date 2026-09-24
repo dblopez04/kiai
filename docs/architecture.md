@@ -21,7 +21,7 @@ as a systemd user service. Its job is the replay watcher.
 | `server` | Private score library UI + API on :8080, and the score sync worker (`serve` runs both; `web` / `worker` split them) | done |
 | `postgres` | Scores, metadata and the job queues | done |
 | `render` / `render-cpu` | danser + Xvfb (`render.Dockerfile`), compose profiles `nvidia` and `cpu`; runs `render-worker` | done |
-| `public` | The public replay app (`http/public.ts`, `server public`): replay pages and videos only, on :8081 | done |
+| `public` | The public replay app (`http/public.ts`, `server public`): replay pages, videos and the gallery only, on :8081 | done |
 | `caddy` | Profile `tunnel`: proxies everything it gets to the public app (`deploy/Caddyfile`) | done |
 | `cloudflared` | Profile `tunnel`: Cloudflare Tunnel with a single `TUNNEL_TOKEN`, hostname → `http://caddy:80` | done |
 
@@ -57,7 +57,7 @@ reads osu! with a client-credentials token, so there's no osu! sign-in. The play
 | `scores/importer.ts` | Recent sync and history import (profile most-played list → per-map scores), checkpointed |
 | `scores/refresh.ts` | Refresh all PP; zero-PP backfill |
 | `scores/pp.ts` | Local PP with rosu-pp-js |
-| `scores/query.ts` | **Filters shared by the UI, the API and CSV.** The replay gallery should use `parseScoreFilters` + `scoreConditions` so its search matches |
+| `scores/query.ts` | **Filters shared by the UI, the API, CSV, tournament scores and the replay gallery** (`parseScoreFilters`, `scoreConditions`, `scoreOrder`) |
 | `scores/csv.ts` | CSV rows and atomic snapshots |
 | `sync/queue.ts` | `sync_runs` job queue: one active job per player, one running job overall, leases with heartbeats, the reset archive |
 | `sync/runner.ts`, `sync/worker.ts` | Run jobs; queue scheduled recent syncs |
@@ -112,7 +112,8 @@ Phases 3–5 implement all six steps, plus the score link. Modules:
 | `render/presets.ts` | `render_presets`, `render_rules` (ordered, first match wins, `default` otherwise), skins in `data/skins` |
 | `render/notify.ts` | Step 6: Discord bot DM or webhook, once per job |
 | `http/render-settings.ts` | The editor at `/render`: presets, rules, skins, dry run |
-| `http/public.ts` | The public replay app |
+| `http/public.ts` | The public replay app: replay pages, videos, the gallery |
+| `replays/gallery.ts` | Phase 6: rendered replays as score-shaped rows (`s`, `b`), so `scoreConditions` filters them unchanged; best per map by beatmap id, or MD5 for unknown maps |
 | `render/worker.ts` | Claim → map → link → render → record; `needs_map` parks a job until its .osz is uploaded |
 | `http/replays.ts` | Upload API (bearer `UPLOAD_TOKEN`), replay JSON, video with byte ranges, private replay pages |
 
@@ -191,5 +192,6 @@ What the code relies on from danser 0.11's source:
 5. **Done:** render presets and rules (picked by the worker once the map's attributes are
    known; jobs record the preset and why), skin uploads (editor and `kiai skin upload`), and
    the editor UI with a dry run.
-6. Gallery with the score library's filters.
+6. **Done:** the public gallery at `/` searches rendered replays with the score library's filters
+   (`replays/gallery.ts`), with osu!'s pp for linked plays and rosu-pp's estimate otherwise.
 7. Later: the skillset checker, once it settles in its own repo.
