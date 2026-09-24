@@ -596,6 +596,31 @@ describe("match worker", () => {
     expect(await enqueueMatches(db.sql, [{ source: "stable", externalId: 10 }], { addedVia: "import" })).toEqual({ queued: 0, known: 1 });
   });
 
+  it("never fetches a saved match again when it's imported or discovered", async () => {
+    const old = new Date(Date.now() - 5 * 3600_000).toISOString();
+    await save(teamMatch(101));
+    const room = rankedPlayRoom(5001, [{ beatmapId: 21, scores: [[USER_ID, 1], [OPPONENT_A, 2]] }]);
+    osu.rooms.set(5001, room.events);
+    await ingestMatch(db.sql, (await fetchMatch(osu, "lazer", 5001))!, { addedVia: "discovery", pp: pp() });
+    osu.calls = [];
+
+    expect(await enqueueMatches(db.sql, parseMatchRefs("https://osu.ppy.sh/mp/101\nhttps://osu.ppy.sh/multiplayer/rooms/5001").refs, { addedVia: "import" })).toEqual({
+      queued: 0,
+      known: 2,
+    });
+    osu.lobbies = [{ id: 101, name: "TST 2026: (Red Rockets) vs (Blue Birds)", start_time: old, end_time: old }];
+    osu.rankedRooms = [room.room];
+    await scanStableFrom(db.sql, 101);
+    const step = worker();
+    for (let i = 0; i < 4; i++) await step();
+
+    // Both crawlers saw the saved matches, but neither queued them.
+    expect(osu.calls).toEqual(expect.arrayContaining(["listMatches id_asc 100", `listUserRankedPlayRooms ${USER_ID}`]));
+    expect(await db.sql`select * from match_queue`).toHaveLength(0);
+    expect(osu.calls.filter((c) => c.startsWith("getMatch") || c.startsWith("getRoomEvents"))).toEqual([]);
+    expect((await db.sql`select count(*)::int as n from matches`)[0]!.n).toBe(2);
+  });
+
   it("refreshes matches still in progress", async () => {
     const running = teamMatch(20, { ended: false, start: new Date() });
     osu.matches.set(20, running);

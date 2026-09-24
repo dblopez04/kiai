@@ -190,9 +190,9 @@ label.grow { display: grid; gap: 0.2rem; }
 .chip.side-blue { border-color: var(--blue); color: var(--blue); }
 .side-red { color: var(--red); }
 .side-blue { color: var(--blue); }
-.scoreline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.9rem; font-size: 1.6rem; margin: 0.4rem 0 0.8rem; }
+.scoreline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.7rem; font-size: 1.15rem; margin: 0.3rem 0 0.6rem; }
 .scoreline .leader { font-weight: 700; }
-.scoreline .wins { font-size: 2.6rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.scoreline .wins { font-size: 1.6rem; line-height: 1; font-variant-numeric: tabular-nums; }
 .mapresult { display: grid; justify-items: end; gap: 0.3rem; text-align: right; }
 .maptotals { font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chip.result { font-size: 0.95rem; font-weight: 700; padding: 0.1rem 0.7rem; color: var(--card); }
@@ -213,7 +213,6 @@ details.menu { position: relative; align-self: flex-start; }
 details.menu summary { list-style: none; padding: 0 0.5rem; border: 1px solid var(--line); border-radius: 6px; font-weight: 700; }
 details.menu summary::-webkit-details-marker { display: none; }
 details.menu form { position: absolute; right: 0; top: calc(100% + 0.3rem); z-index: 2; width: min(16rem, calc(100vw - 2rem)); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem; box-shadow: 0 4px 16px rgb(0 0 0 / 0.15); }
-details.menu form p { margin: 0.4rem 0 0; }
 .discovery { border-top: 1px solid var(--line); padding-top: 0.6rem; margin-top: 0.6rem; }
 .discovery p { margin: 0.3rem 0; }
 .records { display: grid; gap: 0.8rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); }
@@ -240,6 +239,6 @@ svg.bars .baseline { stroke: var(--line); stroke-width: 1; vector-effect: non-sc
   .coverinner { flex-direction: column; align-items: flex-start; }
   .gamehead { flex-wrap: wrap; }
   .mapresult { justify-items: start; text-align: left; }
-  .scoreline { font-size: 1.25rem; }
-  .scoreline .wins { font-size: 2rem; }
+  .scoreline { font-size: 1.05rem; }
+  .scoreline .wins { font-size: 1.4rem; }
 }

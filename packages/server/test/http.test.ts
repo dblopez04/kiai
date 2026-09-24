@@ -96,7 +96,7 @@ describe("pages", () => {
     expect(page.status).toBe(200);
     expect(body).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(body).not.toContain("<script>alert(1)");
-    expect(body).toContain("2 match");
+    expect(body).toContain("2 scores");
     expect(body).toContain('data-mod="DT" data-state="required"');
     expect(body.indexOf("300pp")).toBeLessThan(body.indexOf("200pp"));
     expect(body).not.toContain("user=");
