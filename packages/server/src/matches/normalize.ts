@@ -248,23 +248,25 @@ export function parseMatchName(name: string): ParsedMatchName {
 }
 
 // Matchmaking bots name their lobbies like tournaments ("ROMAI: (A) vs (B)", "ETX: ...", "o!mm Ranked: ...").
-// Case-insensitive, and written so the same pattern works in JavaScript and in Postgres (`~*`).
-export const MATCHMAKING_NAME_PATTERN = "^\\s*(romai|etx|o!mm)(?![a-z0-9_])";
-const MATCHMAKING_NAME = new RegExp(MATCHMAKING_NAME_PATTERN, "i");
+// Each name prefix matches case-insensitively as a whole word, with a pattern that works in JavaScript and in Postgres (`~*`).
+export const MATCHMAKING_BOTS = { romai: "romai", etx: "etx", omm: "o!mm" } as const;
+export type MatchmakingBot = keyof typeof MATCHMAKING_BOTS;
 
-/** Lobbies made by a matchmaking bot (ROMAI, ETX, o!mm): casual play, not a tournament. */
-export function isMatchmakingName(name: string): boolean {
-  return MATCHMAKING_NAME.test(name);
+export const matchmakingPattern = (bot: MatchmakingBot) => `^\\s*${MATCHMAKING_BOTS[bot]}(?![a-z0-9_])`;
+const MATCHMAKING_NAMES = (Object.keys(MATCHMAKING_BOTS) as MatchmakingBot[]).map((bot) => [bot, new RegExp(matchmakingPattern(bot), "i")] as const);
+
+/** The matchmaking bot (ROMAI, ETX, o!mm) that made a lobby, if any: casual play, not a tournament. */
+export function matchmakingBot(name: string): MatchmakingBot | null {
+  return MATCHMAKING_NAMES.find(([, pattern]) => pattern.test(name))?.[0] ?? null;
 }
 
-/** What a match is, for filtering: a tournament match, a matchmaking bot's lobby, a ranked play room, or anything else. */
-export const MATCH_KINDS = ["tournament", "matchmaking", "ranked", "other"] as const;
-export type MatchKind = (typeof MATCH_KINDS)[number];
+/** What a match is: a tournament match, one matchmaking bot's lobby, a ranked play room, or (not filterable) any other lobby. */
+export const MATCH_KINDS = ["tournament", "romai", "etx", "omm", "ranked"] as const;
+export type MatchKind = (typeof MATCH_KINDS)[number] | "other";
 
 export function matchKind(match: { source: MatchSource; name: string; acronym: string | null }): MatchKind {
   if (match.source === "lazer") return "ranked";
-  if (isMatchmakingName(match.name)) return "matchmaking";
-  return match.acronym !== null ? "tournament" : "other";
+  return matchmakingBot(match.name) ?? (match.acronym !== null ? "tournament" : "other");
 }
 
 /** Lobby names worth fetching during discovery: tournament-style names, or ones naming the player. */

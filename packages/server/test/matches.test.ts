@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { analyzeMatch, type CostGame } from "../src/matches/cost.ts";
 import { crawlLazer, crawlStable, encodeCursor, scanStableFrom } from "../src/matches/discovery.ts";
 import { parseMatchRefs } from "../src/matches/import.ts";
-import { isCandidateName, isMatchmakingName, parseMatchName } from "../src/matches/normalize.ts";
+import { isCandidateName, matchmakingBot, parseMatchName } from "../src/matches/normalize.ts";
 import {
   getMatchDetail,
   listMatches,
@@ -129,11 +129,12 @@ describe("names and imports", () => {
   });
 
   it("recognizes matchmaking bot lobbies", () => {
-    for (const name of ["ROMAI: (tester) vs (RivalTwo)", "ETX: (tester) vs (RivalTwo)", "o!mm Ranked: tester vs RivalTwo", "O!MM: casual"]) {
-      expect(isMatchmakingName(name)).toBe(true);
-    }
+    expect(matchmakingBot("ROMAI: (tester) vs (RivalTwo)")).toBe("romai");
+    expect(matchmakingBot("etx: (tester) vs (RivalTwo)")).toBe("etx");
+    expect(matchmakingBot("o!mm Ranked: tester vs RivalTwo")).toBe("omm");
+    expect(matchmakingBot("O!MM: casual")).toBe("omm");
     for (const name of ["ROMAIC: (A) vs (B)", "ETXC 2026: (A) vs (B)", "OWC 2025: (ETX) vs (Japan)", "peppy's o!mm lobby"]) {
-      expect(isMatchmakingName(name)).toBe(false);
+      expect(matchmakingBot(name)).toBeNull();
     }
     expect(isCandidateName("4* auto host", "tester")).toBe(false);
     expect(isCandidateName("tester's lobby", "tester")).toBe(true);
@@ -262,7 +263,7 @@ describe("searching matches", () => {
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, played: 2, won: 1, lost: 1, tournaments: 3 });
   });
 
-  it("filters by kind: tournaments, matchmaking bots, ranked play and other lobbies", async () => {
+  it("filters by kind: tournaments, each matchmaking bot and ranked play", async () => {
     const duel = (id: number, name: string) =>
       stableMatch({ id, name, games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 500_000], [OPPONENT_B, 400_000]] }] });
     await save(duel(4, "ROMAI: (tester) vs (RivalTwo)"));
@@ -271,20 +272,22 @@ describe("searching matches", () => {
     await save(duel(7, "tester's lobby"));
     const all = (await listMatches(db.sql, USER_ID, parseMatchFilters(q()))).matches;
     expect(Object.fromEntries(all.map((m) => [m.external_id, m.kind]))).toEqual({
-      1: "tournament", 2: "tournament", 3: "tournament", 4: "matchmaking", 5: "matchmaking", 6: "matchmaking", 7: "other",
+      1: "tournament", 2: "tournament", 3: "tournament", 4: "romai", 5: "etx", 6: "omm", 7: "other",
     });
     expect((await names({ kind: "tournament" })).sort()).toEqual([1, 2, 3]);
-    expect((await names({ kind: "matchmaking" })).sort()).toEqual([4, 5, 6]);
-    expect((await names({ kind: "other" })).sort()).toEqual([7]);
-    const both = new URLSearchParams([["kind", "tournament"], ["kind", "other"]]);
-    expect((await listMatches(db.sql, USER_ID, parseMatchFilters(both))).matches.map((m) => m.external_id).sort()).toEqual([1, 2, 3, 7]);
+    expect(await names({ kind: "romai" })).toEqual([4]);
+    expect((await names({ kind: "etx,omm" })).sort()).toEqual([5, 6]);
+    const both = new URLSearchParams([["kind", "tournament"], ["kind", "romai"]]);
+    expect((await listMatches(db.sql, USER_ID, parseMatchFilters(both))).matches.map((m) => m.external_id).sort()).toEqual([1, 2, 3, 4]);
+    // `other` has no filter, so it is ignored like any unknown kind.
+    expect((await names({ kind: "other" })).length).toBe(7);
     expect(await names({ kind: "ranked,bogus" })).toEqual([]);
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 7, tournaments: 3 });
     const scores = async (params: Record<string, string>) =>
       (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
     expect(await scores({})).toBe(11);
     expect(await scores({ kind: "tournament" })).toBe(7);
-    expect(await scores({ kind: "matchmaking,other" })).toBe(4);
+    expect(await scores({ kind: "romai,etx,omm" })).toBe(3);
   });
 
   it("searches tournament scores with the score library's filters", async () => {

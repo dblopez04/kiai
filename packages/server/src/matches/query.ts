@@ -14,7 +14,16 @@ import {
   type ScoreFilters,
 } from "../scores/query.ts";
 import type { Side } from "./cost.ts";
-import { MATCH_KINDS, MATCHMAKING_NAME_PATTERN, matchKind, matchUrl, type MatchKind, type MatchSource } from "./normalize.ts";
+import {
+  MATCH_KINDS,
+  MATCHMAKING_BOTS,
+  matchKind,
+  matchmakingPattern,
+  matchUrl,
+  type MatchKind,
+  type MatchmakingBot,
+  type MatchSource,
+} from "./normalize.ts";
 import { analyzeSavedMatch } from "./store.ts";
 
 export const MATCH_SORT_KEYS = ["date", "match_cost", "maps", "avg_score", "accuracy", "name"] as const;
@@ -32,7 +41,7 @@ export interface MatchFilters {
   page: number;
   pageSize: number;
   /** Any of these kinds; none means every match. */
-  kind: MatchKind[];
+  kind: (typeof MATCH_KINDS)[number][];
   /** Usernames or ids that played on the player's side. */
   with: string[];
   /** Usernames or ids that played against the player. */
@@ -79,7 +88,7 @@ const positiveInt = (value: string | null, fallback: number) => {
 };
 const date = (value: string | null) => (value && !Number.isNaN(Date.parse(value)) ? value : null);
 const kinds = (params: URLSearchParams) =>
-  [...new Set(list(params.getAll("kind").join(",")).filter((k): k is MatchKind => (MATCH_KINDS as readonly string[]).includes(k)))];
+  [...new Set(list(params.getAll("kind").join(",")).filter((k): k is (typeof MATCH_KINDS)[number] => (MATCH_KINDS as readonly string[]).includes(k)))];
 
 export function parseMatchFilters(params: URLSearchParams): MatchFilters {
   const sort = params.get("sort");
@@ -190,11 +199,14 @@ const MATCH_ORDER: Record<MatchSortKey, string> = {
 };
 
 /** `matchKind` in SQL, for a `matches` row aliased `m`. */
-const kindOf = (sql: Sql) => sql`(case
-  when m.source = 'lazer' then 'ranked'
-  when m.name ~* ${MATCHMAKING_NAME_PATTERN} then 'matchmaking'
-  when m.acronym is not null then 'tournament'
-  else 'other' end)`;
+const kindOf = (sql: Sql) => {
+  const bots = (Object.keys(MATCHMAKING_BOTS) as MatchmakingBot[]).map((bot) => sql`when m.name ~* ${matchmakingPattern(bot)} then ${bot}::text`);
+  return sql`(case
+    when m.source = 'lazer' then 'ranked'
+    ${bots.reduce((all, when) => sql`${all} ${when}`)}
+    when m.acronym is not null then 'tournament'
+    else 'other' end)`;
+};
 
 const iso = (value: unknown) => (value instanceof Date ? value.toISOString() : typeof value === "string" ? value : null);
 
@@ -443,7 +455,7 @@ export interface TournamentScoreFilters extends ScoreFilters {
   /** Every word must appear in the match name. */
   match: string;
   /** Scores from matches of any of these kinds; none means every match. */
-  kind: MatchKind[];
+  kind: (typeof MATCH_KINDS)[number][];
 }
 
 export function parseTournamentScoreFilters(params: URLSearchParams): TournamentScoreFilters {

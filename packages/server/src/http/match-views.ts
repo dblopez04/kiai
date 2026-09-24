@@ -27,17 +27,11 @@ import { checked, filterForm, fmt, layout, modChips, numberValue, rankClass, ran
 type Html = ReturnType<typeof html>;
 
 const SOURCE_LABEL: Record<MatchSource, string> = { stable: "stable", lazer: "ranked play" };
-const KIND_LABEL: Record<MatchKind, string> = { tournament: "tournament", matchmaking: "ROMAI / ETX / o!mm", ranked: "ranked play", other: "other lobbies" };
-const KIND_TITLE: Record<MatchKind, string> = {
-  tournament: "Tournament-style names, like ACR: (A) vs (B)",
-  matchmaking: "Matchmaking bot lobbies",
-  ranked: "Lazer ranked play rooms",
-  other: "Any other stable lobby",
-};
+const KIND_LABEL: Record<MatchKind, string> = { tournament: "tournament", romai: "ROMAI", etx: "ETX", omm: "o!mm", ranked: "ranked play", other: "other" };
 
 function kindFieldset(selected: readonly MatchKind[]): Html {
   return html`<fieldset class="inline"><legend>Type</legend>
-    ${MATCH_KINDS.map((kind) => html`<label class="check" title="${KIND_TITLE[kind]}"><input type="checkbox" name="kind" value="${kind}" ${checked(selected.includes(kind))}> ${KIND_LABEL[kind]}</label>`)}
+    ${MATCH_KINDS.map((kind) => html`<label class="check"><input type="checkbox" name="kind" value="${kind}" ${checked(selected.includes(kind))}> ${KIND_LABEL[kind]}</label>`)}
   </fieldset>`;
 }
 const cost = (value: number | null | undefined) => (typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "—");
@@ -216,7 +210,7 @@ function matchTable(f: MatchFilters, page: MatchPage): Html {
           <tbody>${page.matches.map(
             (m) => html`<tr>
               <td class="nowrap">${fmt.date(m.start_time)}</td>
-              <td class="map"><a href="/matches/${m.id}">${m.name || `${SOURCE_LABEL[m.source]} #${m.external_id}`}</a>${m.kind === "ranked" || m.kind === "matchmaking" ? html` <span class="chip">${m.kind === "ranked" ? "ranked play" : "matchmaking"}</span>` : ""}</td>
+              <td class="map"><a href="/matches/${m.id}">${m.name || `${SOURCE_LABEL[m.source]} #${m.external_id}`}</a>${m.kind !== "tournament" && m.kind !== "other" ? html` <span class="chip">${KIND_LABEL[m.kind]}</span>` : ""}</td>
               <td class="nowrap">${resultChip(m.result)} ${scoreLine(m)}</td>
               <td class="r">${cost(m.me?.match_cost)}</td>
               <td class="r">${m.me ? html`${m.me.games_played}<span class="muted">/${m.games_count}</span>` : m.games_count}</td>
@@ -359,7 +353,7 @@ export function matchPage(m: MatchDetail, player: Player, notice?: string): Html
       </div>
       ${headline(m)}
       <p class="muted">
-        ${m.kind === "ranked" ? "Lazer ranked play" : m.kind === "matchmaking" ? "Matchmaking lobby" : m.kind === "tournament" ? `Tournament ${m.acronym}` : "Stable multiplayer"} ·
+        ${m.kind === "ranked" ? "Lazer ranked play" : m.kind === "tournament" ? `Tournament ${m.acronym}` : m.kind === "other" ? "Stable multiplayer" : `${KIND_LABEL[m.kind]} matchmaking`} ·
         ${fmt.dateTime(m.start_time)}${duration !== null ? ` · ${duration} min` : ""}${m.end_time ? "" : " · in progress"} ·
         ${m.games_count} maps · <a href="${m.url}" target="_blank" rel="noopener noreferrer">View on osu! ↗</a>
       </p>

@@ -327,7 +327,7 @@ Same privacy rules as the pages: private hostnames only. Uploads also need `UPLO
 | `GET /api/render/dry-run?replay=<id>` | Which preset the rules pick for a replay, and why |
 | `PUT /api/skins/:name` | Upload an .osk (raw body, bearer token); replaces a skin of that name |
 | `GET /replays/:id/video` | The rendered mp4, with byte ranges |
-| `GET /api/matches?…filters` | Paged matches. Filters: `q`, `sort` (`date`, `match_cost`, `maps`, `avg_score`, `accuracy`, `name`), `order`, `page`, `page_size`, `kind` (`tournament`, `matchmaking` for ROMAI/ETX/o!mm lobbies, `ranked` for ranked play, `other`; comma-separated), `with`, `vs` (comma-separated names or ids), `result` (`won`, `lost`), `played`, `min_cost`/`max_cost`, `min_maps`/`max_maps`, `date_from`/`date_to` |
+| `GET /api/matches?…filters` | Paged matches. Filters: `q`, `sort` (`date`, `match_cost`, `maps`, `avg_score`, `accuracy`, `name`), `order`, `page`, `page_size`, `kind` (`tournament`, `romai`, `etx`, `omm` for the ROMAI, ETX and o!mm matchmaking bots, `ranked` for ranked play; comma-separated), `with`, `vs` (comma-separated names or ids), `result` (`won`, `lost`), `played`, `min_cost`/`max_cost`, `min_maps`/`max_maps`, `date_from`/`date_to` |
 | `GET /api/matches/:id` | One match: players with match costs, every map and score |
 | `GET /api/matches/scores?…filters` | Tournament scores: the `/api/scores` filters plus `player` (`me`, `all`, a name or id), `match` and `kind` |
 | `GET /api/matches/stats` | Record, match costs and tournament count |
