@@ -91,6 +91,8 @@ export interface ApiUser {
   username: string;
   avatar_url?: string;
   country_code?: string;
+  /** Names the user had before, oldest first. Only on full profiles. */
+  previous_usernames?: string[];
   statistics?: {
     pp?: number | null;
     global_rank?: number | null;

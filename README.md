@@ -187,7 +187,10 @@ match has every map played and every player's score.
 - **Searching matches:** by name, teammates (**With**: players on your side), opponents
   (**Against**), result, source, match cost, maps played and date. Sort by date, match cost,
   maps, average score, accuracy or name. In a 1v1 the other player is your opponent. In a
-  qualifier or free-for-all lobby, everyone else counts as an opponent.
+  qualifier or free-for-all lobby, everyone else counts as an opponent. Players are matched by
+  osu! user id: type an id, a current name or any name they used to have (kiai remembers every
+  name it has seen, and asks osu! about names it hasn't), and the link switches to ids so it keeps
+  working after a name change.
 - **Tournament scores** searches every score in saved matches with the score library's filters
   (mods, PP, stars, speed, rank, best per map...), plus player (you, anyone, or `all`), match
   name and source. NoFail is ignored in mod filters, since tournaments force it, so NM means

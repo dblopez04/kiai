@@ -55,10 +55,11 @@ function scoreLine(m: Pick<MatchListItem, "red_wins" | "blue_wins" | "me">): str
   return m.me?.side === "blue" ? `${m.blue_wins}–${m.red_wins}` : `${m.red_wins}–${m.blue_wins}`;
 }
 
-function people(list: PlayerRef[], max = 4): Html | string {
+/** Players linking to their other matches, by id so the links survive name changes. */
+function people(list: PlayerRef[], filter: "with" | "vs", max = 4): Html | string {
   if (list.length === 0) return html`<span class="muted">—</span>`;
   const shown = list.slice(0, max);
-  return html`${shown.map((p, i) => html`${i ? ", " : ""}<a href="/matches?vs=${encodeURIComponent(p.username ?? String(p.id))}">${who(p)}</a>`)}${
+  return html`${shown.map((p, i) => html`${i ? ", " : ""}<a href="/matches?${filter}=${p.id}">${who(p)}</a>`)}${
     list.length > max ? html` <span class="muted">+${list.length - max}</span>` : ""
   }`;
 }
@@ -163,7 +164,8 @@ function importPanel(queue: QueueOverview): Html {
   </section>`;
 }
 
-function matchFilterForm(f: MatchFilters): Html {
+function matchFilterForm(f: MatchFilters, names: Record<string, string>): Html {
+  const players = (list: string[]) => list.map((v) => names[v] ?? v).join(", ");
   return html`<form method="get" action="/matches" class="card filters" data-filters>
     <div class="row wrap">
       <input type="search" name="q" value="${f.q}" placeholder="Search match names" aria-label="Search matches" class="grow">
@@ -171,8 +173,8 @@ function matchFilterForm(f: MatchFilters): Html {
       <label>Order <select name="order"><option value="desc">High → low</option><option value="asc" ${f.order === "asc" ? html`selected` : ""}>Low → high</option></select></label>
     </div>
     <div class="row wrap">
-      <label class="grow">With <input name="with" value="${f.with.join(", ")}" placeholder="teammates, comma-separated" class="wide"></label>
-      <label class="grow">Against <input name="vs" value="${f.vs.join(", ")}" placeholder="opponents, comma-separated" class="wide"></label>
+      <label class="grow">With <input name="with" value="${players(f.with)}" placeholder="teammates (names or ids), comma-separated" class="wide"></label>
+      <label class="grow">Against <input name="vs" value="${players(f.vs)}" placeholder="opponents (names or ids), comma-separated" class="wide"></label>
     </div>
     <div class="row wrap">
       <fieldset class="inline"><legend>Source</legend>
@@ -212,8 +214,8 @@ function matchTable(f: MatchFilters, page: MatchPage): Html {
               <td class="r">${cost(m.me?.match_cost)}</td>
               <td class="r">${m.me ? html`${m.me.games_played}<span class="muted">/${m.games_count}</span>` : m.games_count}</td>
               <td class="r">${m.me ? fmt.acc(m.me.avg_accuracy) : "—"}</td>
-              <td>${m.me?.side ? people(m.teammates) : html`<span class="muted">—</span>`}</td>
-              <td>${people(m.opponents)}</td>
+              <td>${m.me?.side ? people(m.teammates, "with") : html`<span class="muted">—</span>`}</td>
+              <td>${people(m.opponents, "vs")}</td>
               <td><a href="${m.url}" target="_blank" rel="noopener noreferrer" title="Open on osu!">↗</a></td>
             </tr>`,
           )}</tbody>
@@ -240,7 +242,7 @@ export function matchesPage(d: MatchesPageData): Html {
     html`${d.notice ? html`<p class="notice" role="status">${d.notice}</p>` : ""}
       ${statsPanel(d.stats)}
       <div class="grid2">${importPanel(d.queue)}${discoveryPanel(d.discovery, d.discoveryEnabled, d.osuConfigured)}</div>
-      ${matchFilterForm(d.filters)}
+      ${matchFilterForm(d.filters, d.page.player_names)}
       ${matchTable(d.filters, d.page)}`,
     d.player,
   );
@@ -274,7 +276,7 @@ function playersTable(m: MatchDetail, playerId: number): Html {
           <tbody>${m.players.map(
             (p) => html`<tr class="${p.user_id === playerId ? "me" : ""}">
               <td><a href="${profile(p.user_id)}" target="_blank" rel="noopener noreferrer">${who(p)}</a>${p.country_code ? html` <span class="muted small">${p.country_code}</span>` : ""}
-                ${p.user_id === playerId ? "" : html` <a class="small" href="/matches?${p.side && p.side === m.me?.side ? "with" : "vs"}=${encodeURIComponent(p.username ?? String(p.user_id))}" title="Other matches with this player">matches</a>`}</td>
+                ${p.user_id === playerId ? "" : html` <a class="small" href="/matches?${p.side && p.side === m.me?.side ? "with" : "vs"}=${p.user_id}" title="Other matches with this player">matches</a>`}</td>
               <td>${sideChip(p.side)}</td>
               <td class="r">${p.games_played}</td>
               <td class="r">${fmt.number(Math.round(p.avg_score))}</td>
@@ -371,7 +373,7 @@ export function matchPage(m: MatchDetail, player: Player, notice?: string): Html
 export function tournamentScoresPage(player: Player, f: TournamentScoreFilters, page: TournamentScorePage): Html {
   const link = (p: number) => `/matches/scores?${tournamentFiltersToParams(f, { page: p }).toString()}`;
   const extra = html`<div class="row wrap">
-    <label>Player <input name="player" value="${f.player === "me" ? "" : f.player}" placeholder="you (or a name, or all)" class="wide"></label>
+    <label>Player <input name="player" value="${f.player === "me" ? "" : (page.player_name ?? f.player)}" placeholder="you (or a name, id, or all)" class="wide"></label>
     <label class="grow">Match <input name="match" value="${f.match}" placeholder="match name words, e.g. OWC 2026" class="wide"></label>
     <fieldset class="inline"><legend>Source</legend>
       <label class="check"><input type="checkbox" name="source" value="stable" ${checked(f.source.includes("stable"))}> stable</label>
