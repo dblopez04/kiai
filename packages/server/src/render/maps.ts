@@ -80,33 +80,34 @@ export async function scanFolder(dir: string): Promise<OsuFileInfo[]> {
 }
 
 /**
- * Unpack an .osz into `dest`, which must not exist yet. Rejects paths that escape the folder
- * (yauzl refuses absolute and `..` names) and archives that unpack to more than 2 GB.
+ * Unpack a zip (.osz, .osk) into `dest`, which must not exist yet. Rejects paths that escape the
+ * folder (yauzl refuses absolute and `..` names) and archives that unpack to more than 2 GB.
+ * `kind` names the archive in error messages.
  */
-export async function extractOsz(oszPath: string, dest: string): Promise<void> {
+export async function extractZip(zipPath: string, dest: string, kind = ".osz"): Promise<void> {
   let zip: yauzl.ZipFile;
   try {
-    zip = await yauzl.openPromise(oszPath, { lazyEntries: true, strictFileNames: false, validateEntrySizes: true });
+    zip = await yauzl.openPromise(zipPath, { lazyEntries: true, strictFileNames: false, validateEntrySizes: true });
   } catch (error) {
-    throw new UserError(`That isn't a beatmap archive (.osz): ${errorMessage(error)}`);
+    throw new UserError(`That isn't a ${kind} file (a zip archive): ${errorMessage(error)}`);
   }
   try {
-    if (zip.entryCount > MAX_ENTRIES) throw new UserError(`That .osz has ${zip.entryCount} files; the limit is ${MAX_ENTRIES}.`);
+    if (zip.entryCount > MAX_ENTRIES) throw new UserError(`That ${kind} has ${zip.entryCount} files; the limit is ${MAX_ENTRIES}.`);
     await fs.mkdir(dest);
     const root = path.resolve(dest);
     let total = 0;
     for await (const entry of zip.eachEntry()) {
       if (entry.fileName.endsWith("/")) continue;
       total += entry.uncompressedSize;
-      if (total > MAX_EXTRACTED_BYTES) throw new UserError("That .osz unpacks to more than 2 GB.");
+      if (total > MAX_EXTRACTED_BYTES) throw new UserError(`That ${kind} unpacks to more than 2 GB.`);
       const target = path.resolve(root, entry.fileName);
-      if (!target.startsWith(root + path.sep)) throw new UserError(`That .osz contains an unsafe path: ${entry.fileName}`);
+      if (!target.startsWith(root + path.sep)) throw new UserError(`That ${kind} contains an unsafe path: ${entry.fileName}`);
       await fs.mkdir(path.dirname(target), { recursive: true });
       await pipeline(await zip.openReadStreamPromise(entry), createWriteStream(target, { flags: "wx" }));
     }
   } catch (error) {
     if (error instanceof UserError) throw error;
-    throw new UserError(`That .osz couldn't be unpacked: ${errorMessage(error)}`);
+    throw new UserError(`That ${kind} couldn't be unpacked: ${errorMessage(error)}`);
   } finally {
     zip.close();
   }
@@ -128,7 +129,7 @@ export async function writeStreamLimited(body: ReadableStream<Uint8Array> | Read
 }
 
 /** Run `work` holding a Postgres advisory lock, so two workers never unpack into the same folder. */
-async function withLock<T>(sql: Sql, key: string, work: () => Promise<T>): Promise<T> {
+export async function withLock<T>(sql: Sql, key: string, work: () => Promise<T>): Promise<T> {
   const reserved = await sql.reserve();
   try {
     await reserved`select pg_advisory_lock(hashtextextended(${key}, 0))`;
@@ -182,7 +183,7 @@ export async function installOsz(
   return withLock(sql, `kiai-songs:${folder}`, async () => {
     const staging = path.join(paths.tmp, `extract-${randomUUID()}`);
     try {
-      await extractOsz(oszPath, staging);
+      await extractZip(oszPath, staging);
       const files = await scanFolder(staging);
       if (files.length === 0) throw new UserError("That .osz contains no .osu files.");
       if (requireMd5 && !files.some((f) => f.md5 === requireMd5)) {

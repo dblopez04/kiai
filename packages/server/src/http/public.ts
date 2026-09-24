@@ -85,8 +85,8 @@ ${r.beatmap?.cover_url ? html`<meta property="og:image" content="${r.beatmap.cov
 <meta property="og:video" content="${video}">
 <meta property="og:video:secure_url" content="${video}">
 <meta property="og:video:type" content="video/mp4">
-<meta property="og:video:width" content="1920">
-<meta property="og:video:height" content="1080">
+<meta property="og:video:width" content="${r.render?.video_width ?? 1920}">
+<meta property="og:video:height" content="${r.render?.video_height ?? 1080}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#ff66aa">`;
   return layout(

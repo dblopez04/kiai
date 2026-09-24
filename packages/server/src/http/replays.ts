@@ -12,10 +12,11 @@ import { UserError } from "../errors.ts";
 import type { MediaPaths } from "../media.ts";
 import type { Player } from "../player.ts";
 import { installOsz, MAX_OSZ_BYTES, writeStreamLimited } from "../render/maps.ts";
-import { DEFAULT_PRESET } from "../render/preset.ts";
+import { getPreset, listPresets } from "../render/presets.ts";
 import { enqueueRender, requeueWaitingFor } from "../render/queue.ts";
 import { getReplay, linkReplays, listReplays, normalizeDevserver, saveReplay } from "../replays/store.ts";
 import { sendFile } from "./files.ts";
+import { registerRenderSettingsRoutes } from "./render-settings.ts";
 import { replayPage, replaysPage } from "./views.ts";
 
 const MAX_OSR_BYTES = 32 * 1024 * 1024;
@@ -65,6 +66,20 @@ async function readBody(c: Context, limit: number, what: string): Promise<Buffer
 
 export function registerReplayRoutes(app: Hono, deps: ReplayRouteDeps): void {
   const { sql, media, player } = deps;
+  registerRenderSettingsRoutes(app, {
+    sql,
+    player,
+    media,
+    requireUploadToken: (c) => {
+      try {
+        requireUploadToken(c, deps.uploadToken);
+        return null;
+      } catch (error) {
+        if (error instanceof HttpError) return c.json({ error: error.message }, error.status);
+        throw error;
+      }
+    },
+  });
   const isApi = (c: Context) => c.req.path.startsWith("/api/");
 
   // HTTP errors become responses here; anything else reaches the app's own error handler.
@@ -97,7 +112,7 @@ export function registerReplayRoutes(app: Hono, deps: ReplayRouteDeps): void {
       const saved = await saveReplay(sql, media, data, devserver);
       const existing = saved.created ? null : await getReplay(sql, saved.id);
       // A new replay, or an old one never rendered: queue it. Re-uploads don't re-render a finished one.
-      if (saved.created || !existing?.render) await enqueueRender(sql, saved.id, DEFAULT_PRESET.name);
+      if (saved.created || !existing?.render) await enqueueRender(sql, saved.id, null);
       if (saved.created) await linkReplays(sql, player.id);
       return c.json({ ...(await getReplay(sql, saved.id)), created: saved.created }, saved.created ? 201 : 200, PRIVATE);
     }),
@@ -136,11 +151,19 @@ export function registerReplayRoutes(app: Hono, deps: ReplayRouteDeps): void {
     }),
   );
 
-  /** Render again (after a failure, or once the map is available). */
+  /** A preset to render with, or null to let the rules pick. */
+  const presetChoice = async (value: unknown): Promise<string | null> => {
+    if (typeof value !== "string" || value === "") return null;
+    if (!(await getPreset(sql, value))) throw new UserError(`There's no preset named "${value}".`);
+    return value;
+  };
+
+  /** Render again (after a failure, or with another preset): `{"preset": "hd"}`, or no body for the rules. */
   app.post("/api/replays/:id/render", (c) =>
     guard(c, async () => {
       const replay = await replayOr404(c);
-      const result = await enqueueRender(sql, replay.id, DEFAULT_PRESET.name);
+      const body = (await c.req.json().catch(() => ({}))) as { preset?: unknown };
+      const result = await enqueueRender(sql, replay.id, await presetChoice(body.preset));
       return c.json({ render_id: result.job.id, already_queued: result.alreadyQueued }, result.alreadyQueued ? 200 : 202);
     }),
   );
@@ -149,12 +172,13 @@ export function registerReplayRoutes(app: Hono, deps: ReplayRouteDeps): void {
 
   app.get("/replays", async (c) => c.html(replaysPage(await listReplays(sql), player, c.req.query("notice")), 200, PRIVATE));
 
-  app.get("/replays/:id", (c) => guard(c, async () => c.html(replayPage(await replayOr404(c), player, deps.publicUrl), 200, PRIVATE)));
+  app.get("/replays/:id", (c) => guard(c, async () => c.html(replayPage(await replayOr404(c), player, deps.publicUrl, await listPresets(sql)), 200, PRIVATE)));
 
   app.post("/replays/:id/render", (c) =>
     guard(c, async () => {
       const replay = await replayOr404(c);
-      await enqueueRender(sql, replay.id, DEFAULT_PRESET.name);
+      const form = await c.req.parseBody();
+      await enqueueRender(sql, replay.id, await presetChoice(form.preset));
       return c.redirect(`/replays/${replay.id}`, 303);
     }),
   );

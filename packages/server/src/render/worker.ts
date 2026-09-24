@@ -12,9 +12,10 @@ import { replayAttributes } from "../replays/attributes.ts";
 import { getReplay, linkReplays, replayFile, type ReplayView } from "../replays/store.ts";
 import { normalizeMods } from "../scores/mods.ts";
 import type { Renderer } from "./danser.ts";
-import { ensureBeatmap } from "./maps.ts";
+import { ensureBeatmap, findBeatmapFile } from "./maps.ts";
 import { notifySafely, type Notifier } from "./notify.ts";
-import { presetByName } from "./preset.ts";
+import { BUILTIN_SKIN, choosePreset, getPreset, listSkins, presetFrameSize } from "./presets.ts";
+import { ruleFacts } from "./rules.ts";
 import { claimRender, RenderLease } from "./queue.ts";
 
 export interface RenderDeps {
@@ -51,12 +52,9 @@ export async function runNextRender(deps: RenderDeps, signal?: AbortSignal): Pro
   log(`started (attempt ${job.attempts})`);
 
   try {
-    const [replay] = await sql<
-      { beatmap_md5: string; beatmap_id: number | null; mods: unknown; count300: number; count100: number; count50: number; countmiss: number; max_combo: number }[]
-    >`select beatmap_md5, beatmap_id, mods, count300, count100, count50, countmiss, max_combo from replays where id = ${job.replay_id}`;
+    const [replay] = await sql<{ beatmap_md5: string; beatmap_id: number | null }[]>`
+      select beatmap_md5, beatmap_id from replays where id = ${job.replay_id}`;
     if (!replay) throw new Error("The replay was deleted.");
-    const preset = presetByName(job.preset);
-    if (!preset) throw new Error(`Unknown render preset "${job.preset}".`);
 
     const map = await ensureBeatmap(
       { sql, osu: deps.osu, paths, mirrors: deps.mirrors, log, ...(deps.fetch ? { fetch: deps.fetch } : {}) },
@@ -74,9 +72,26 @@ export async function runNextRender(deps: RenderDeps, signal?: AbortSignal): Pro
       return true;
     }
 
-    const osu = await fs.readFile(path.join(paths.songs, map.file.folder, map.file.file), "utf8");
-    const attributes = replayAttributes(osu, { ...replay, mods: normalizeMods(replay.mods) });
-    await sql`update replays set attributes = ${attributes ? sqlJson(sql, attributes) : null} where id = ${job.replay_id}`;
+    await updateReplayAttributes(sql, paths, job.replay_id);
+
+    // Pick the preset now that the map's attributes are known, unless one was chosen by hand.
+    const view = await getReplay(sql, job.replay_id);
+    if (!view) throw new Error("The replay was deleted.");
+    let preset;
+    let reason;
+    if (job.preset === null) {
+      ({ preset, reason } = await choosePreset(sql, ruleFacts(view)));
+    } else {
+      preset = await getPreset(sql, job.preset);
+      if (!preset) throw new Error(`The preset "${job.preset}" was deleted. Render again to pick another.`);
+      reason = job.preset_reason ?? "chosen by hand";
+    }
+    if (preset.skin !== BUILTIN_SKIN && !(await listSkins(paths)).includes(preset.skin)) {
+      throw new Error(`Preset "${preset.name}" uses the skin "${preset.skin}", which isn't uploaded.`);
+    }
+    const frame = presetFrameSize(preset);
+    await lease.update({ preset: preset.name, preset_reason: reason, video_width: frame.width, video_height: frame.height });
+    log(`preset ${preset.name} (${reason})`);
 
     stop.signal.throwIfAborted();
     const outputName = `${job.replay_id}-${job.id}`;
@@ -126,6 +141,23 @@ export async function runNextRender(deps: RenderDeps, signal?: AbortSignal): Pro
     lease.stopHeartbeat();
     signal?.removeEventListener("abort", onShutdown);
   }
+  return true;
+}
+
+/**
+ * Work out and store a replay's attributes (its map with its mods applied). Needs the map on
+ * disk; returns false when it isn't there.
+ */
+export async function updateReplayAttributes(sql: Sql, paths: MediaPaths, replayId: string): Promise<boolean> {
+  const [replay] = await sql<
+    { beatmap_md5: string; mods: unknown; count300: number; count100: number; count50: number; countmiss: number; max_combo: number }[]
+  >`select beatmap_md5, mods, count300, count100, count50, countmiss, max_combo from replays where id = ${replayId}`;
+  if (!replay) return false;
+  const file = await findBeatmapFile(sql, paths, replay.beatmap_md5);
+  if (!file) return false;
+  const osu = await fs.readFile(path.join(paths.songs, file.folder, file.file), "utf8");
+  const attributes = replayAttributes(osu, { ...replay, mods: normalizeMods(replay.mods) });
+  await sql`update replays set attributes = ${attributes ? sqlJson(sql, attributes) : null} where id = ${replayId}`;
   return true;
 }
 

@@ -10,7 +10,6 @@ import { danserRenderer, type Renderer } from "../src/render/danser.ts";
 import { ensureBeatmap, installOsz, parseOsuMetadata } from "../src/render/maps.ts";
 import { claimRender, enqueueRender, MAX_RENDER_ATTEMPTS } from "../src/render/queue.ts";
 import { runNextRender, type RenderDeps } from "../src/render/worker.ts";
-import { DEFAULT_PRESET } from "../src/render/preset.ts";
 import { legacyMods, parseReplay, replayRank } from "../src/replays/osr.ts";
 import { getReplay, linkReplays, normalizeDevserver, saveReplay } from "../src/replays/store.ts";
 import { runImport } from "../src/scores/importer.ts";
@@ -19,6 +18,7 @@ import { beatmap, fakeOsu, score, USER_ID, type FakeOsu } from "./helpers/fake-o
 import { buildOsr, buildZip, md5Of, osuText } from "./helpers/replay-files.ts";
 
 const TOKEN = "test-upload-token-0123456789";
+const PRESET = { name: "default", description: "", skin: "default", patch: { Recording: { FPS: 60 } } };
 const ORIGIN = "http://localhost:8080";
 
 let db: TestDb;
@@ -166,7 +166,7 @@ describe("beatmaps", () => {
     const other = await writeFile("other.osz", buildZip({ "x.osu": osuText(1, 2) }));
     await expect(installOsz(db.sql, media, other, "keep", "upload", MAP_MD5)).rejects.toThrow(/doesn't contain the difficulty/);
     expect(await fs.readdir(path.join(media.songs, "keep"))).toContain("audio.mp3");
-    await expect(installOsz(db.sql, media, await writeFile("junk.osz", "not a zip"), "junk", "upload")).rejects.toThrow(/isn't a beatmap archive/);
+    await expect(installOsz(db.sql, media, await writeFile("junk.osz", "not a zip"), "junk", "upload")).rejects.toThrow(/isn't a \.osz file/);
   });
 
   it("asks osu! which set a replay's map is in, then downloads it from the first mirror that has it", async () => {
@@ -229,7 +229,7 @@ describe("render queue and worker", () => {
   it("renders a queued replay into the videos directory", async () => {
     knowMap();
     const { id } = await saveReplay(db.sql, media, buildOsr({ beatmapMd5: MAP_MD5 }), null);
-    await enqueueRender(db.sql, id, DEFAULT_PRESET.name);
+    await enqueueRender(db.sql, id, null);
     const renderer = fakeRenderer();
     expect(await runNextRender(renderDeps(renderer))).toBe(true);
     expect(await runNextRender(renderDeps(renderer))).toBe(false);
@@ -304,20 +304,20 @@ exit 0
     const danserDir = path.join(dir, "danser");
     const renderer = danserRenderer({ dir: danserDir, paths: media, encoder: "libx264", xvfb: false, timeoutMs: 30_000, command: await fakeDanser("ok") });
     const progress: number[] = [];
-    const video = await renderer.render({ replayFile: "/r.osr", outputName: "abc-1", preset: DEFAULT_PRESET, onProgress: (p) => progress.push(p) }, new AbortController().signal);
+    const video = await renderer.render({ replayFile: "/r.osr", outputName: "abc-1", preset: PRESET, onProgress: (p) => progress.push(p) }, new AbortController().signal);
 
     expect(video).toBe(path.join(media.videos, "abc-1.mp4"));
     expect(progress).toEqual([10, 60]);
     const args = (await fs.readFile(path.join(dir, "args"), "utf8")).trim().split("\n");
     expect(args.slice(0, 7)).toEqual(["-replay", "/r.osr", "-record", "-out", "abc-1", "-settings", "kiai"]);
-    expect(JSON.parse(args[args.indexOf("-sPatch") + 1]!)).toEqual(DEFAULT_PRESET.patch);
+    expect(JSON.parse(args[args.indexOf("-sPatch") + 1]!)).toEqual(PRESET.patch);
     const settings = JSON.parse(await fs.readFile(path.join(danserDir, "settings", "kiai.json"), "utf8"));
     expect(settings).toMatchObject({ General: { OsuSongsDir: media.songs }, Recording: { Encoder: "libx264", OutputDir: media.videos } });
   });
 
   it("fails with danser's own words when no video comes out", async () => {
     const renderer = danserRenderer({ dir: path.join(dir, "danser"), paths: media, encoder: "libx264", xvfb: false, timeoutMs: 30_000, command: await fakeDanser("missing-map") });
-    await expect(renderer.render({ replayFile: "/r.osr", outputName: "x", preset: DEFAULT_PRESET, onProgress: () => {} }, new AbortController().signal)).rejects.toThrow(
+    await expect(renderer.render({ replayFile: "/r.osr", outputName: "x", preset: PRESET, onProgress: () => {} }, new AbortController().signal)).rejects.toThrow(
       /couldn't find the beatmap[\s\S]*Beatmap not found/,
     );
   });

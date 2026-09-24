@@ -160,3 +160,21 @@ func (c *Client) UploadBeatmapset(id string, osz string) error {
 	}
 	return c.do(http.MethodPut, "/api/replays/"+url.PathEscape(id)+"/beatmapset", f, info.Size(), nil)
 }
+
+// UploadSkin sends an .osk to the server's skins, replacing a skin with the same name.
+func (c *Client) UploadSkin(name string, osk string) ([]string, error) {
+	f, err := os.Open(osk)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Skins []string `json:"skins"`
+	}
+	err = c.do(http.MethodPut, "/api/skins/"+url.PathEscape(name), f, info.Size(), &out)
+	return out.Skins, err
+}

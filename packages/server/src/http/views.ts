@@ -5,6 +5,7 @@ import { MOD_CATEGORIES, STANDARD_MODS, modDescription, modLabel, modSettingLabe
 import { filtersToParams, SORT_KEYS, type ScoreFilters, type ScorePage, type ScoreStats, type ScoreView } from "../scores/query.ts";
 import type { SyncOverview, SyncRun } from "../sync/queue.ts";
 import type { Player } from "../player.ts";
+import type { RenderPreset } from "../render/presets.ts";
 import type { ReplayView } from "../replays/store.ts";
 
 type Html = ReturnType<typeof html>;
@@ -49,7 +50,7 @@ export function layout(title: string, body: Html, player: Player): Html {
 <body>
 <header class="topbar">
   <a class="brand" href="/">kiai</a>
-  <nav><a href="/">Scores</a><a href="/replays">Replays</a><a class="who" href="https://osu.ppy.sh/users/${player.id}" target="_blank" rel="noopener noreferrer">${player.username}</a></nav>
+  <nav><a href="/">Scores</a><a href="/replays">Replays</a><a href="/render">Render settings</a><a class="who" href="https://osu.ppy.sh/users/${player.id}" target="_blank" rel="noopener noreferrer">${player.username}</a></nav>
 </header>
 <main>${body}</main>
 </body>
@@ -409,7 +410,7 @@ export function replaysPage(replays: readonly ReplayView[], player: Player, noti
   );
 }
 
-export function replayPage(r: ReplayView, player: Player, publicUrl?: string): Html {
+export function replayPage(r: ReplayView, player: Player, publicUrl?: string, presets: readonly RenderPreset[] = []): Html {
   const job = r.render;
   const row = (label: string, value: unknown) => html`<tr><th>${label}</th><td>${value}</td></tr>`;
   const canRetry = !job || job.status === "failed" || job.status === "needs_map" || job.status === "success";
@@ -445,7 +446,7 @@ export function replayPage(r: ReplayView, player: Player, publicUrl?: string): H
         <h2>Render</h2>
         <table class="kv">
           ${row("Status", renderState(r))}
-          ${job ? row("Preset", job.preset) : ""}
+          ${job ? row("Preset", job.preset ? html`${job.preset}${job.preset_reason ? html` <span class="muted small">(${job.preset_reason})</span>` : ""}` : "picked by the rules when it renders") : ""}
           ${job?.finished_at ? row("Finished", fmt.dateTime(job.finished_at)) : ""}
           ${job?.video_bytes ? row("Size", `${(job.video_bytes / 1024 / 1024).toFixed(1)} MB`) : ""}
         </table>
@@ -453,7 +454,12 @@ export function replayPage(r: ReplayView, player: Player, publicUrl?: string): H
         ${job?.status === "needs_map" ? html`<p>Run <code>kiai render</code> on the PC you played on again: it uploads the map from your Songs folder.</p>` : ""}
         ${job?.video_url ? html`<p><a href="${job.video_url}" download="${r.id}.mp4">Download video</a></p>` : ""}
         ${job?.status === "success" && publicUrl ? html`<p>Public page: <a href="${publicUrl}/r/${r.id}" target="_blank" rel="noopener noreferrer">${publicUrl}/r/${r.id}</a></p>` : ""}
-        ${canRetry ? html`<form method="post" action="/replays/${r.id}/render"><button>${job ? "Render again" : "Render"}</button></form>` : ""}
+        ${canRetry
+          ? html`<form method="post" action="/replays/${r.id}/render" class="row wrap">
+              <select name="preset" aria-label="Preset"><option value="">Preset: pick with the rules</option>${presets.map((p) => html`<option value="${p.name}">Preset: ${p.name}</option>`)}</select>
+              <button>${job ? "Render again" : "Render"}</button>
+            </form>`
+          : ""}
       </section>
     </div>`,
     player,

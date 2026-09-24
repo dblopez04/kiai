@@ -274,3 +274,36 @@ func rankName(rank string) string {
 	}
 	return rank
 }
+
+func skinCommand(args []string, io IO) error {
+	if len(args) == 0 || args[0] != "upload" {
+		return fmt.Errorf("Usage: kiai skin upload <file.osk> [--name <name>]")
+	}
+	a, err := parseArgs(args[1:], map[string]flagKind{"name": stringFlag})
+	if err != nil {
+		return err
+	}
+	file, err := a.onePositional("kiai skin upload <file.osk> [--name <name>]")
+	if err != nil {
+		return err
+	}
+	name := strings.TrimSpace(a.strings["name"])
+	if name == "" {
+		name = strings.TrimSuffix(strings.TrimSuffix(filepath.Base(file), ".osk"), ".zip")
+	}
+	p := paths.Resolve(io.Getenv)
+	cfg, err := config.Load(p.ConfigFile)
+	if err != nil {
+		return err
+	}
+	server, err := serverSettings(cfg, io)
+	if err != nil {
+		return err
+	}
+	skins, err := kiaiapi.New(server.URL, server.Token).UploadSkin(name, file)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(io.Out, "Uploaded skin %q. Pick it for a preset at %s/render\nSkins on the server: %s\n", name, server.URL, strings.Join(skins, ", "))
+	return nil
+}

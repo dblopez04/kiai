@@ -48,6 +48,8 @@ Usage:
                                      export) and follow its render; --backlog also uploads old ones
   kiai watch install                 Run the watcher as a systemd user service, starting at login
   kiai watch uninstall               Stop and remove that service
+  kiai skin upload <file.osk> [--name <name>]
+                                     Upload a skin for render presets (default name: the file's)
   kiai help | --help | --version
 
 Example:
@@ -105,6 +107,8 @@ func dispatch(args []string, io IO) (int, error) {
 		return renderCommand(args[1:], io)
 	case "watch":
 		return watchCommand(args[1:], io)
+	case "skin":
+		return 0, skinCommand(args[1:], io)
 	default:
 		return 1, fmt.Errorf("Unknown command %q. Run \"kiai help\" for usage.", args[0])
 	}

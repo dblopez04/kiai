@@ -8,7 +8,7 @@ Tools for osu! players on Linux who run a homelab.
 | Private score library: auto-synced scores, search/filter, local PP, CSV exports | **done** (server) |
 | Replay rendering with danser on the homelab GPU: `kiai render <file.osr>` | **done** (client + server) |
 | Replay watcher (systemd user service), Discord DM or webhook with the link | **done** (client + server) |
-| Render presets chosen by rules on the replay (mods, AR, server, ...) | planned: phase 5 |
+| Render presets chosen by rules on the replay (mods, AR, server, ...), skin uploads, editor | **done** (server + client) |
 | Public replay pages with inline Discord video (Caddy + Cloudflare Tunnel) | **done** (server) |
 | Public gallery with the score library's filters | planned: phase 6 |
 | Map skillset checker | later, once it settles in its own repo |
@@ -186,8 +186,8 @@ How a render goes:
   in *needs the beatmap* until the client uploads the set, which re-queues it. Maps are kept in
   `data/songs` and reused.
 - **Render:** `danser-cli` under `xvfb-run`, with base settings in `<danser>/settings/kiai.json`
-  (Songs, Skins and output folders, encoder) and the preset as a `-sPatch`. There is one preset
-  for now: 1080p60 with danser's default skin. Videos land in `data/videos`.
+  (Songs, Skins and output folders, encoder) and the preset as a `-sPatch`. The preset is picked by
+  your rules (see below) once the map's attributes are known. Videos land in `data/videos`.
 - **Score library:** each replay from the official servers is linked to its play in the library,
   by stable's online score id, or by map, player name, combo, hit counts and score. Replays uploaded
   before their play is synced get linked after the next sync.
@@ -196,7 +196,31 @@ How a render goes:
   A render still running after `RENDER_TIMEOUT_MINUTES` is stopped.
 
 Rendered replays are listed at <http://localhost:8080/replays> (private, like the score library),
-where you can watch or download them and render again.
+where you can watch or download them and render again, with the rules or a preset you pick.
+
+### Presets, rules and skins
+
+<http://localhost:8080/render> (private) edits how replays are rendered:
+
+- **Presets** are a skin plus a JSON patch over danser's settings (keys as in danser's
+  `settings/default.json`), e.g. `{"Recording": {"FrameWidth": 1280, "FrameHeight": 720}}`. The
+  `default` preset (1080p60, danser's own skin) can't be deleted. kiai keeps `General`,
+  `Recording.OutputDir` and `Recording.Container` to itself.
+- **Rules** are checked top to bottom; the first enabled one that matches picks the preset, and
+  `default` is used when none does. A rule is conditions joined by `and`:
+
+  ```
+  HD and ar < 10.3           → hd       (mods: a bare acronym, or mods has DT / mods lacks HD)
+  ar >= 10.3                 → fast     (ar od cs hp stars bpm length pp accuracy combo misses rate)
+  server = gatari.pw         → gatari   (server: `official` for osu!'s own; also player, rank)
+  ```
+
+  Map values are after mods (AR 9 with DT is 10.33, via rosu-pp), and DT also matches NC, as in the
+  score filters. For "or", add another rule.
+- **Dry run** shows which rule a replay would hit, with the values the rules saw.
+- **Skins**: upload an `.osk` on the page, or from the gaming PC with
+  `kiai skin upload "<file>.osk" [--name <name>]`. Archives that wrap everything in one folder are
+  flattened. Uploading a skin with an existing name replaces it.
 
 ### Public replay pages and Discord
 
@@ -255,7 +279,10 @@ Same privacy rules as the pages: private hostnames only. Uploads also need `UPLO
 | `POST /api/replays?devserver=<host>` | Upload a .osr (raw body, `Authorization: Bearer <UPLOAD_TOKEN>`). Queues a render; returns the replay. `devserver` is omitted for the official servers |
 | `GET /api/replays`, `GET /api/replays/:id` | Replays with their latest render: `queued`, `running` (with `progress`), `needs_map`, `success` (with `video_url`) or `failed` (with `error`) |
 | `PUT /api/replays/:id/beatmapset` | Upload the .osz a replay was played on (raw body, bearer token). Refused if it lacks that exact difficulty |
-| `POST /api/replays/:id/render` | Render again |
+| `POST /api/replays/:id/render` | Render again: `{"preset": "hd"}`, or no body to let the rules pick |
+| `GET /api/render/presets`, `GET /api/render/rules` | Presets (and skins), and rules in order |
+| `GET /api/render/dry-run?replay=<id>` | Which preset the rules pick for a replay, and why |
+| `PUT /api/skins/:name` | Upload an .osk (raw body, bearer token); replaces a skin of that name |
 | `GET /replays/:id/video` | The rendered mp4, with byte ranges |
 
 ## Development

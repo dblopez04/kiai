@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { MediaPaths } from "../media.ts";
-import type { RenderPreset } from "./preset.ts";
+import type { RenderPreset } from "./presets.ts";
 
 export interface RenderInput {
   replayFile: string;

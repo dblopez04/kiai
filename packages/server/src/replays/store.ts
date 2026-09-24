@@ -118,7 +118,10 @@ export async function linkReplays(sql: Sql, userId: number): Promise<number> {
 
 export interface RenderView {
   id: number;
-  preset: string;
+  /** Null until the worker picks one with the rules. */
+  preset: string | null;
+  /** Why this preset: "rule 2: ar >= 10.3", "no rule matched", "chosen by hand". */
+  preset_reason: string | null;
   status: "queued" | "running" | "needs_map" | "success" | "failed";
   progress: number;
   attempts: number;
@@ -128,6 +131,8 @@ export interface RenderView {
   /** Private-network link to the video, once rendered. */
   video_url: string | null;
   video_bytes: number | null;
+  video_width: number | null;
+  video_height: number | null;
 }
 
 export interface ReplayView {
@@ -213,7 +218,8 @@ function toReplayView(row: Row): ReplayView {
     render: job
       ? {
           id: job.id as number,
-          preset: job.preset as string,
+          preset: (job.preset as string | null) ?? null,
+          preset_reason: (job.preset_reason as string | null) ?? null,
           status: job.status as RenderView["status"],
           progress: job.progress as number,
           attempts: job.attempts as number,
@@ -222,6 +228,8 @@ function toReplayView(row: Row): ReplayView {
           finished_at: iso(job.finished_at),
           video_url: job.status === "success" ? `/replays/${row.id as string}/video` : null,
           video_bytes: job.video_bytes as number | null,
+          video_width: (job.video_width as number | null) ?? null,
+          video_height: (job.video_height as number | null) ?? null,
         }
       : null,
   };

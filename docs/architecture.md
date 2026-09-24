@@ -76,7 +76,7 @@ Differences from the proof of concept:
 
 ## Render pipeline
 
-Phase 3 implements steps 1, 2 and 5 (with one hard-coded preset), plus the score link. Modules:
+Phases 3–5 implement all six steps, plus the score link. Modules:
 
 | Module | |
 |---|---|
@@ -85,7 +85,12 @@ Phase 3 implements steps 1, 2 and 5 (with one hard-coded preset), plus the score
 | `render/maps.ts` | `beatmap_files` (every extracted .osu by MD5), safe .osz extraction (yauzl, no path escapes, size caps), mirror downloads, `ensureBeatmap` |
 | `render/queue.ts` | `render_jobs`: one unfinished job per replay, `for update skip locked` claims so several slots can run, leases with heartbeats, 3 attempts |
 | `render/danser.ts` | Runs `danser-cli` under `xvfb-run` in its own process group; progress from danser's log; timeout |
-| `render/preset.ts` | The one preset (phase 5 replaces it with rules) |
+| `replays/attributes.ts` | Step 3: the map with the replay's mods applied (rosu-pp), stored in `replays.attributes` |
+| `render/rules.ts` | Rule expressions (`HD and ar < 10.3`): parser, matcher, and the facts a replay offers |
+| `render/presets.ts` | `render_presets`, `render_rules` (ordered, first match wins, `default` otherwise), skins in `data/skins` |
+| `render/notify.ts` | Step 6: Discord bot DM or webhook, once per job |
+| `http/render-settings.ts` | The editor at `/render`: presets, rules, skins, dry run |
+| `http/public.ts` | The public replay app |
 | `render/worker.ts` | Claim → map → link → render → record; `needs_map` parks a job until its .osz is uploaded |
 | `http/replays.ts` | Upload API (bearer `UPLOAD_TOKEN`), replay JSON, video with byte ranges, private replay pages |
 
@@ -149,6 +154,8 @@ What the code relies on from danser 0.11's source:
 4. **Done:** replay watcher (systemd user unit), Discord notification (bot DM or webhook),
    the public replay app on its own port, Caddy and cloudflared. Replays also get their
    mod-adjusted attributes (`replays/attributes.ts`, rosu-pp), step 3 of the pipeline.
-5. Render presets and rules, skin uploads, editor UI.
+5. **Done:** render presets and rules (picked by the worker once the map's attributes are
+   known; jobs record the preset and why), skin uploads (editor and `kiai skin upload`), and
+   the editor UI with a dry run.
 6. Gallery with the score library's filters.
 7. Later: the skillset checker, once it settles in its own repo.

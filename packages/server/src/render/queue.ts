@@ -13,25 +13,34 @@ export type RenderStatus = "queued" | "running" | "needs_map" | "success" | "fai
 export interface RenderJob {
   id: number;
   replay_id: string;
-  preset: string;
+  /** Null until the worker picks one with the rules. */
+  preset: string | null;
+  preset_reason: string | null;
   status: RenderStatus;
   progress: number;
   attempts: number;
   error_text: string | null;
   video_path: string | null;
   video_bytes: number | null;
+  video_width: number | null;
+  video_height: number | null;
   heartbeat_at: Date | null;
   created_at: Date;
   started_at: Date | null;
   finished_at: Date | null;
 }
 
-const COLUMNS = "id, replay_id, preset, status, progress, attempts, error_text, video_path, video_bytes, heartbeat_at, created_at, started_at, finished_at";
+const COLUMNS =
+  "id, replay_id, preset, preset_reason, status, progress, attempts, error_text, video_path, video_bytes, video_width, video_height, heartbeat_at, created_at, started_at, finished_at";
 
-/** Queue a render of the replay, unless one is already queued, running or waiting for its map. */
-export async function enqueueRender(sql: Sql, replayId: string, preset: string): Promise<{ job: RenderJob; alreadyQueued: boolean }> {
+/**
+ * Queue a render of the replay, unless one is already queued, running or waiting for its map.
+ * `preset` null lets the rules pick one when the job runs.
+ */
+export async function enqueueRender(sql: Sql, replayId: string, preset: string | null): Promise<{ job: RenderJob; alreadyQueued: boolean }> {
+  const reason = preset === null ? null : "chosen by hand";
   const [created] = await sql<RenderJob[]>`
-    insert into render_jobs (replay_id, preset, status) values (${replayId}, ${preset}, 'queued')
+    insert into render_jobs (replay_id, preset, preset_reason, status) values (${replayId}, ${preset}, ${reason}, 'queued')
     on conflict (replay_id) where status in ('queued', 'running', 'needs_map') do nothing
     returning ${sql.unsafe(COLUMNS)}`;
   if (created) return { job: created, alreadyQueued: false };
@@ -90,6 +99,10 @@ export class RenderLeaseLostError extends Error {
 
 type RenderUpdate = Partial<{
   status: RenderStatus;
+  preset: string;
+  preset_reason: string;
+  video_width: number;
+  video_height: number;
   progress: number;
   attempts: number;
   error_text: string | null;
