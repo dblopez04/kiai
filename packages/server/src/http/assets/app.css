@@ -165,6 +165,13 @@ ul.plain { list-style: none; padding: 0; display: grid; gap: 0.3rem; }
 .replaycard:hover { border-color: var(--accent); }
 .replaycard img { width: 6rem; height: 4.2rem; object-fit: cover; border-radius: 6px; flex: none; }
 textarea.code { font: 0.9em/1.4 ui-monospace, monospace; }
+.settings-groups { justify-self: stretch; display: grid; gap: 0.8rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); }
+fieldset.settings { display: grid; gap: 0.4rem; align-content: start; padding: 0.5rem 0.8rem 0.8rem; }
+fieldset.settings label.check { white-space: normal; align-items: baseline; }
+fieldset.settings label.check small, fieldset.settings label.field small { display: block; }
+fieldset.settings label.field { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; }
+details.advanced { justify-self: stretch; }
+details.advanced > label { display: grid; gap: 0.3rem; margin-top: 0.5rem; }
 .topbar nav.sections { gap: 1.2rem; flex-wrap: wrap; }
 .topbar nav.sections a:not(.brand) { color: var(--muted); text-decoration: none; }
 .topbar nav.sections a:not(.brand):hover { color: var(--accent); }

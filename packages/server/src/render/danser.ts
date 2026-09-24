@@ -27,6 +27,12 @@ export interface DanserOptions {
   encoder: string;
   /** Wrap danser in `xvfb-run`: it opens a (hidden) window even when recording. */
   xvfb: boolean;
+  /**
+   * Where danser's OpenGL runs. "gpu" wraps it in VirtualGL's `vglrun -d egl`, which sends GL to
+   * the GPU through EGL while the window lives on Xvfb. "software" leaves GL to whatever the
+   * display offers, which under Xvfb is Mesa's llvmpipe: every frame drawn on the CPU.
+   */
+  gl: "gpu" | "software";
   timeoutMs: number;
   log?: (message: string) => void;
   /** Overrides the executable, for tests. */
@@ -57,7 +63,17 @@ export function baseSettings(options: Pick<DanserOptions, "paths" | "encoder">) 
 }
 
 const PROGRESS = /Progress: (\d{1,3})%/;
+const GL_RENDERER = /GL Renderer:\s*(.+)$/;
+const SOFTWARE_GL = /llvmpipe|softpipe|swrast|software rasterizer/i;
 const TAIL_LINES = 30;
+
+/** The command line for one render: danser-cli, inside vglrun and xvfb-run as configured. */
+export function danserCommand(options: Pick<DanserOptions, "xvfb" | "gl">, executable: string, args: readonly string[]): string[] {
+  // VGL_READBACK=none (set in the environment) skips copying frames back to Xvfb: danser reads
+  // its frames from its own buffers, and nobody looks at the hidden window.
+  const inner = options.gl === "gpu" ? ["vglrun", "-d", "egl", executable, ...args] : [executable, ...args];
+  return options.xvfb ? ["xvfb-run", "-a", "-s", "-screen 0 1920x1080x24", ...inner] : inner;
+}
 
 export function danserRenderer(options: DanserOptions): Renderer {
   const executable = options.command ?? path.join(options.dir, "danser-cli");
@@ -79,17 +95,21 @@ export function danserRenderer(options: DanserOptions): Renderer {
         "-quickstart",
         "-noupdatecheck",
         "-preciseprogress",
+        ...(input.preset.skipIntro ? ["-skip"] : []),
       ];
-      const [command, ...commandArgs] = options.xvfb
-        ? ["xvfb-run", "-a", "-s", "-screen 0 1920x1080x24", executable, ...args]
-        : [executable, ...args];
+      const [command, ...commandArgs] = danserCommand(options, executable, args);
 
       const tail: string[] = [];
+      let glReported = false;
       const code = await new Promise<number | string>((resolve, reject) => {
         const child = spawn(command!, commandArgs, {
           cwd: options.dir,
-          // danser's bundled ffmpeg has a broken rpath; point it at its libraries.
-          env: { ...process.env, LD_LIBRARY_PATH: [path.join(options.dir, "ffmpeg"), options.dir, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") },
+          env: {
+            ...process.env,
+            // danser's bundled ffmpeg has a broken rpath; point it at its libraries.
+            LD_LIBRARY_PATH: [path.join(options.dir, "ffmpeg"), options.dir, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":"),
+            ...(options.gl === "gpu" ? { VGL_READBACK: "none" } : {}),
+          },
           stdio: ["ignore", "pipe", "pipe"],
           // Its own process group, so stopping it also stops Xvfb and ffmpeg.
           detached: true,
@@ -123,6 +143,21 @@ export function danserRenderer(options: DanserOptions): Renderer {
             if (tail.length > TAIL_LINES) tail.shift();
             const match = PROGRESS.exec(line);
             if (match) input.onProgress(Math.min(100, Number(match[1])));
+            const renderer = glReported ? null : GL_RENDERER.exec(line);
+            if (renderer) {
+              glReported = true;
+              const name = renderer[1]!.trim();
+              if (SOFTWARE_GL.test(name)) {
+                options.log?.(
+                  `danser is drawing with ${name}, on the CPU, which makes renders very slow.` +
+                    (options.gl === "gpu"
+                      ? " VirtualGL found no GPU: give the container NVIDIA_DRIVER_CAPABILITIES with graphics (see compose.yaml)."
+                      : " Set RENDER_GL=gpu on an NVIDIA host (compose's nvidia profile does)."),
+                );
+              } else {
+                options.log?.(`danser is drawing with ${name}`);
+              }
+            }
           }
         };
         child.stdout!.on("data", onData);

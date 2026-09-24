@@ -14,7 +14,16 @@ import {
   type ScoreFilters,
 } from "../scores/query.ts";
 import type { Side } from "./cost.ts";
-import { matchUrl, type MatchSource } from "./normalize.ts";
+import {
+  MATCH_KINDS,
+  MATCHMAKING_BOTS,
+  matchKind,
+  matchmakingPattern,
+  matchUrl,
+  type MatchKind,
+  type MatchmakingBot,
+  type MatchSource,
+} from "./normalize.ts";
 import { analyzeSavedMatch } from "./store.ts";
 
 export const MATCH_SORT_KEYS = ["date", "match_cost", "maps", "avg_score", "accuracy", "name"] as const;
@@ -31,7 +40,8 @@ export interface MatchFilters {
   order: "asc" | "desc";
   page: number;
   pageSize: number;
-  source: MatchSource[];
+  /** Kinds left out; other lobbies are always shown. */
+  hide: (typeof MATCH_KINDS)[number][];
   /** Usernames or ids that played on the player's side. */
   with: string[];
   /** Usernames or ids that played against the player. */
@@ -39,8 +49,6 @@ export interface MatchFilters {
   result: "won" | "lost" | null;
   /** Only matches the player has scores in. */
   played: boolean;
-  /** Only tournament-style names ("ACR: ..."). */
-  tournament: boolean;
   minCost: number | null;
   maxCost: number | null;
   minMaps: number | null;
@@ -55,12 +63,11 @@ export const DEFAULT_MATCH_FILTERS: MatchFilters = {
   order: "desc",
   page: 1,
   pageSize: PAGE_SIZE_DEFAULT,
-  source: [],
+  hide: [],
   with: [],
   vs: [],
   result: null,
   played: false,
-  tournament: false,
   minCost: null,
   maxCost: null,
   minMaps: null,
@@ -80,7 +87,16 @@ const positiveInt = (value: string | null, fallback: number) => {
   return parsed !== null && parsed >= 1 ? Math.floor(parsed) : fallback;
 };
 const date = (value: string | null) => (value && !Number.isNaN(Date.parse(value)) ? value : null);
-const sources = (value: string | null) => [...new Set(list(value).filter((s): s is MatchSource => (MATCH_SOURCES as readonly string[]).includes(s)))];
+// `hide=romai,etx`, or the Type checkboxes: `show=<kind>` for each one ticked, plus a `show=-` marker so that
+// unticking every box still counts. Everything not shown is hidden.
+const hiddenKinds = (params: URLSearchParams) => {
+  if (params.has("show")) {
+    const shown = new Set(params.getAll("show"));
+    return MATCH_KINDS.filter((kind) => !shown.has(kind));
+  }
+  const hide = new Set(list(params.getAll("hide").join(",")));
+  return MATCH_KINDS.filter((kind) => hide.has(kind));
+};
 
 export function parseMatchFilters(params: URLSearchParams): MatchFilters {
   const sort = params.get("sort");
@@ -91,12 +107,11 @@ export function parseMatchFilters(params: URLSearchParams): MatchFilters {
     order: params.get("order") === "asc" ? "asc" : "desc",
     page: positiveInt(params.get("page"), 1),
     pageSize: Math.min(positiveInt(params.get("page_size"), PAGE_SIZE_DEFAULT), PAGE_SIZE_MAX),
-    source: sources(params.getAll("source").join(",")),
+    hide: hiddenKinds(params),
     with: [...new Set(list(params.get("with")))],
     vs: [...new Set(list(params.get("vs")))],
     result: result === "won" || result === "lost" ? result : null,
     played: params.get("played") === "true",
-    tournament: params.get("tournament") === "true",
     minCost: number(params.get("min_cost")),
     maxCost: number(params.get("max_cost")),
     minMaps: number(params.get("min_maps")),
@@ -117,12 +132,11 @@ export function matchFiltersToParams(filters: MatchFilters, overrides: Partial<M
   set("order", f.order, DEFAULT_MATCH_FILTERS.order);
   set("page", f.page, 1);
   set("page_size", f.pageSize, PAGE_SIZE_DEFAULT);
-  if (f.source.length) params.set("source", f.source.join(","));
+  if (f.hide.length) params.set("hide", f.hide.join(","));
   if (f.with.length) params.set("with", f.with.join(","));
   if (f.vs.length) params.set("vs", f.vs.join(","));
   set("result", f.result);
   set("played", f.played);
-  set("tournament", f.tournament);
   set("min_cost", f.minCost);
   set("max_cost", f.maxCost);
   set("min_maps", f.minMaps);
@@ -160,6 +174,7 @@ export interface MatchListItem {
   url: string;
   name: string;
   acronym: string | null;
+  kind: MatchKind;
   red_name: string | null;
   blue_name: string | null;
   start_time: string | null;
@@ -191,14 +206,23 @@ const MATCH_ORDER: Record<MatchSortKey, string> = {
   name: "lower(m.name)",
 };
 
+/** `matchKind` in SQL, for a `matches` row aliased `m`. */
+const kindOf = (sql: Sql) => {
+  const bots = (Object.keys(MATCHMAKING_BOTS) as MatchmakingBot[]).map((bot) => sql`when m.name ~* ${matchmakingPattern(bot)} then ${bot}::text`);
+  return sql`(case
+    when m.source = 'lazer' then 'ranked'
+    ${bots.reduce((all, when) => sql`${all} ${when}`)}
+    when m.acronym is not null then 'tournament'
+    else 'other' end)`;
+};
+
 const iso = (value: unknown) => (value instanceof Date ? value.toISOString() : typeof value === "string" ? value : null);
 
 function matchConditions(sql: Sql, playerId: number, f: MatchFilters, users: Map<string, number>): PendingQuery<Row[]> {
   const c: PendingQuery<Row[]>[] = [sql`true`];
   for (const word of searchWords(f.q)) c.push(sql`m.name ilike ${`%${word}%`}`);
-  if (f.source.length) c.push(sql`m.source = any(${f.source}::text[])`);
+  if (f.hide.length) c.push(sql`${kindOf(sql)} <> all(${f.hide}::text[])`);
   if (f.played) c.push(sql`me.user_id is not null`);
-  if (f.tournament) c.push(sql`m.acronym is not null`);
   if (f.result) {
     const lead = sql`(case me.side when 'red' then m.red_wins - m.blue_wins when 'blue' then m.blue_wins - m.red_wins end)`;
     c.push(f.result === "won" ? sql`${lead} > 0` : sql`${lead} < 0`);
@@ -230,6 +254,7 @@ function toMatchListItem(row: Row): MatchListItem {
     url: matchUrl(row.source, row.external_id),
     name: row.name,
     acronym: row.acronym,
+    kind: matchKind({ source: row.source, name: row.name, acronym: row.acronym }),
     red_name: row.red_name,
     blue_name: row.blue_name,
     start_time: iso(row.start_time),
@@ -437,7 +462,8 @@ export interface TournamentScoreFilters extends ScoreFilters {
   player: string;
   /** Every word must appear in the match name. */
   match: string;
-  source: MatchSource[];
+  /** Leave out scores from matches of these kinds. */
+  hide: (typeof MATCH_KINDS)[number][];
 }
 
 export function parseTournamentScoreFilters(params: URLSearchParams): TournamentScoreFilters {
@@ -445,7 +471,7 @@ export function parseTournamentScoreFilters(params: URLSearchParams): Tournament
     ...parseScoreFilters(params),
     player: (params.get("player") ?? "").trim() || "me",
     match: (params.get("match") ?? "").trim(),
-    source: sources(params.getAll("source").join(",")),
+    hide: hiddenKinds(params),
   };
 }
 
@@ -454,7 +480,7 @@ export function tournamentFiltersToParams(f: TournamentScoreFilters, overrides: 
   const params = filtersToParams(merged);
   if (merged.player !== "me") params.set("player", merged.player);
   if (merged.match) params.set("match", merged.match);
-  if (merged.source.length) params.set("source", merged.source.join(","));
+  if (merged.hide.length) params.set("hide", merged.hide.join(","));
   return params;
 }
 
@@ -521,7 +547,7 @@ function toTournamentScore(row: Row): TournamentScoreView {
   };
 }
 
-/** Scores from every saved match, with the score library's filters plus player, match name and source. */
+/** Scores from every saved match, with the score library's filters plus player, match name and hidden kinds. */
 export async function listTournamentScores(sql: Sql, playerId: number, f: TournamentScoreFilters): Promise<TournamentScorePage> {
   let userId: number | null = playerId;
   let unknownPlayer: string | null = null;
@@ -533,7 +559,7 @@ export async function listTournamentScores(sql: Sql, playerId: number, f: Tourna
   }
   const extra: PendingQuery<Row[]>[] = [sql`true`];
   for (const word of searchWords(f.match)) extra.push(sql`s.match_name ilike ${`%${word}%`}`);
-  if (f.source.length) extra.push(sql`s.match_source = any(${f.source}::text[])`);
+  if (f.hide.length) extra.push(sql`exists (select 1 from matches m where m.id = s.match_id and ${kindOf(sql)} <> all(${f.hide}::text[]))`);
   const where = sql`${scoreConditions(sql, userId, f)} and ${extra.reduce((all, c) => sql`${all} and ${c}`)}`;
   const from = sql`from match_score_rows s left join beatmaps b on b.id = s.beatmap_id left join osu_users u on u.id = s.user_id`;
   const offset = (f.page - 1) * f.pageSize;
@@ -578,7 +604,7 @@ export async function matchStats(sql: Sql, playerId: number): Promise<MatchStats
         count(*) filter (where (case me.side when 'red' then m.red_wins - m.blue_wins when 'blue' then m.blue_wins - m.red_wins end) > 0)::int as won,
         count(*) filter (where (case me.side when 'red' then m.red_wins - m.blue_wins when 'blue' then m.blue_wins - m.red_wins end) < 0)::int as lost,
         avg(me.match_cost) as avg_cost,
-        count(distinct lower(m.acronym))::int as tournaments
+        count(distinct lower(m.acronym)) filter (where ${kindOf(sql)} = 'tournament')::int as tournaments
       from matches m left join match_players me on me.match_id = m.id and me.user_id = ${playerId}`,
     sql`
       select m.id as match_id, m.name, me.match_cost from match_players me join matches m on m.id = me.match_id

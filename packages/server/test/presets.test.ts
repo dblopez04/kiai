@@ -9,8 +9,9 @@ import { resolvePlayer } from "../src/player.ts";
 import type { RenderInput, Renderer } from "../src/render/danser.ts";
 import { installOsz } from "../src/render/maps.ts";
 import {
-  addRule, choosePreset, deletePreset, deleteSkin, installSkin, listRules, listSkins, moveRule, parsePatch, savePreset, updateRule,
+  addRule, choosePreset, deletePreset, deleteSkin, getPreset, installSkin, listRules, listSkins, moveRule, parsePatch, savePreset, updateRule,
 } from "../src/render/presets.ts";
+import { fieldValue, mergePatch, SETTING_GROUPS, settingsFromForm, withoutFormKeys } from "../src/render/settings-form.ts";
 import { enqueueRender } from "../src/render/queue.ts";
 import { matchesRule, parseRule, ruleFacts, type RuleFacts } from "../src/render/rules.ts";
 import { runNextRender } from "../src/render/worker.ts";
@@ -35,6 +36,8 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.sql`truncate osu_users, beatmaps, scores, replays, render_jobs, beatmap_files, render_rules cascade`;
   await db.sql`delete from render_presets where name <> 'default'`;
+  await db.sql`update render_presets set skin = 'default', skip_intro = true,
+    patch = '{"Recording": {"FrameWidth": 1920, "FrameHeight": 1080, "FPS": 60}}' where name = 'default'`;
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "kiai-presets-"));
   media = mediaPaths(dir);
   await ensureMediaDirs(media);
@@ -150,6 +153,45 @@ describe("presets and rules", () => {
   });
 });
 
+/** What a browser submits for the settings form showing `patch`: unchecked boxes are left out. */
+function formOf(patch: Record<string, unknown>): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const field of SETTING_GROUPS.flatMap((group) => group.fields)) {
+    const value = fieldValue(field, patch);
+    if (value === true) fields[field.key] = "1";
+    else if (value !== false) fields[field.key] = String(value);
+  }
+  return fields;
+}
+
+describe("settings form", () => {
+  it("keeps only what differs from danser's defaults, and reads back what a patch sets", () => {
+    const read = (fields: Record<string, string>) => settingsFromForm((name) => fields[name]);
+    expect(read(formOf({}))).toEqual({});
+    const patch = {
+      Recording: { FrameWidth: 1280, FrameHeight: 720, FPS: 30, MotionBlur: { Enabled: true } },
+      Audio: { MusicVolume: 0.3 },
+      Gameplay: { ScoreBoard: { Show: false } },
+      Skin: { Cursor: { Scale: 0.75 } },
+    };
+    expect(read(formOf(patch))).toEqual(patch);
+    // A value the menus don't list (set in JSON) survives a save.
+    expect(read(formOf({ Recording: { FPS: 75, FrameWidth: 1000, FrameHeight: 1000 } }))).toEqual({ Recording: { FPS: 75, FrameWidth: 1000, FrameHeight: 1000 } });
+    // danser's defaults drop out: the seeded default preset's 1080p60 is danser's own.
+    expect(read(formOf({ Recording: { FrameWidth: 1920, FrameHeight: 1080, FPS: 60 } }))).toEqual({});
+
+    expect(() => read({ ...formOf({}), "Audio.MusicVolume": "loud" })).toThrow(/Music volume needs a number/);
+    expect(() => read({ ...formOf({}), "Audio.MusicVolume": "150" })).toThrow(/between 0 and 100/);
+    expect(() => read({ ...formOf({}), "Recording.Resolution": "huge" })).toThrow(/look like 1920x1080/);
+  });
+
+  it("leaves the keys it doesn't cover to the JSON box", () => {
+    const patch = { Recording: { FPS: 120, h264_nvenc: { CQ: 26 } }, Gameplay: { Score: { Show: false } }, Cursor: { TrailStyle: 3 } };
+    expect(withoutFormKeys(patch)).toEqual({ Recording: { h264_nvenc: { CQ: 26 } }, Cursor: { TrailStyle: 3 } });
+    expect(mergePatch({ Recording: { FPS: 60, FrameWidth: 1280 } }, { Recording: { FPS: 120 } })).toEqual({ Recording: { FPS: 120, FrameWidth: 1280 } });
+  });
+});
+
 describe("skins", () => {
   it("unpack .osk files, flattening a wrapping folder", async () => {
     expect(await installSkin(db.sql, media, await writeFile("a.osk", skinZip(true)), "My Skin")).toBe("My Skin");
@@ -258,6 +300,34 @@ describe("render editor", () => {
     const [rule] = await listRules(db.sql);
     expect(location(await post(`/render/rules/${rule!.id}/delete`, {}))).toContain("Rule deleted");
     expect(await listRules(db.sql)).toEqual([]);
+  });
+
+  it("starts new presets from the default preset's settings", async () => {
+    await savePreset(db.sql, media, { name: "default", description: "", skin: "default", patch: '{"Gameplay": {"ScoreBoard": {"Show": false}}, "Cursor": {"TrailStyle": 3}}', skipIntro: false }, { create: false });
+    const page = await (await request("/render/presets/new")).text();
+    expect(page).toMatch(/name="Gameplay\.ScoreBoard\.Show" value="1"\s*>/);
+    expect(page).toMatch(/name="Gameplay\.Score\.Show" value="1"\s*checked>/);
+    expect(page).toMatch(/name="skip_intro" value="1"\s*>/);
+    expect(page).toContain("&quot;TrailStyle&quot;: 3");
+
+    // Submitted with one change: the inherited leaderboard stays off, and the PP counter is unticked.
+    const fields = formOf({ Gameplay: { ScoreBoard: { Show: false }, PPCounter: { Show: false } } });
+    const created = await post("/render/presets?from=default", { form: "settings", name: "clean", description: "", skin: "default", advanced: '{"Cursor": {"TrailStyle": 3}}', ...fields });
+    expect(location(created)).toBe("/render/presets/clean?notice=Preset created.");
+    expect(await getPreset(db.sql, "clean")).toMatchObject({
+      skipIntro: false,
+      patch: { Gameplay: { ScoreBoard: { Show: false }, PPCounter: { Show: false } }, Cursor: { TrailStyle: 3 } },
+    });
+    // The Copy link starts from another preset.
+    expect(await (await request("/render/presets/new?from=clean")).text()).toMatch(/name="Gameplay\.PPCounter\.Show" value="1"\s*>/);
+
+    // A bare JSON patch goes over the default preset too.
+    await post("/render/presets", { name: "json", description: "", skin: "", patch: '{"Recording": {"FPS": 120}}' });
+    expect(await getPreset(db.sql, "json")).toMatchObject({ skipIntro: false, patch: { Gameplay: { ScoreBoard: { Show: false } }, Recording: { FPS: 120 } } });
+
+    // Errors go back to the new-preset page.
+    expect(location(await post("/render/presets?from=clean", { form: "settings", name: "new", skin: "default", ...fields }))).toMatch(/^\/render\/presets\/new\?from=clean&error="new" can't be a preset name/);
+    expect(location(await post("/render/presets/clean", { form: "settings", skin: "default", ...fields, "Audio.MusicVolume": "x" }))).toContain("error=Music volume needs a number");
   });
 
   it("uploads skins from the page and from the client", async () => {

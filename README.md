@@ -4,7 +4,6 @@ Tools for osu! players on Linux who run a homelab.
 
 | Feature | Status |
 |---|---|
-| osu-winello presets with app-launcher shortcuts | **done** (client) |
 | Private score library: auto-synced scores, search/filter, local PP, CSV exports | **done** (server) |
 | Match database: tournament mp links and lazer ranked play, Bathbot match costs, tournament score search | **done** (server) |
 | Replay rendering with danser on the homelab GPU: `kiai render <file.osr>` | **done** (client + server) |
@@ -19,75 +18,20 @@ See [docs/architecture.md](docs/architecture.md) for the full design and roadmap
 ## Client
 
 The client runs on the PC you play on. It's a single static Go binary (~7 MB) with no
-runtime to install. It needs [osu-winello](https://github.com/NelloKudo/osu-winello).
+runtime to install. It watches for replays you export and sends them to your kiai server to be
+rendered.
 
 ### Install
 
 ```sh
 cd client && make build        # needs Go 1.27+ (sudo dnf install golang)
 install -m755 dist/kiai-linux-x64 ~/.local/bin/kiai
+kiai server set http://homelab:8080 --token <UPLOAD_TOKEN>   # the server's UPLOAD_TOKEN
 ```
-
-### Presets
-
-A preset starts osu! stable through osu-winello, optionally on a private server
-(`osu-wine --devserver <host>`), and gets its own app-launcher entry.
-
-```sh
-kiai preset add gatari --devserver gatari.pw
-# -> "osu! (gatari.pw)" appears in your app launcher; searching "gatari" finds it
-
-kiai preset add akatsuki --devserver akatsuki.gg --label "osu! (akatsuki relax)" --keyword relax
-kiai preset add bancho                  # official servers
-kiai preset list
-kiai preset remove akatsuki
-kiai preset sync                        # rewrite entries, e.g. after moving the binary
-kiai launch gatari                      # what the launcher entries run
-```
-
-Files:
-
-| Path | What |
-|---|---|
-| `~/.config/kiai/config.json` | Presets. Safe to hand-edit; run `preset sync` afterwards. `"osuWinePath"` overrides where `osu-wine` is found. |
-| `~/.local/share/applications/kiai-<name>.desktop` | Launcher entries. kiai only touches files it created (they carry `X-Kiai-Preset`). |
-| `~/.local/state/kiai/session.json` | The preset that last launched osu!. Uploads are tagged with its server, since `.osr` files don't record one. |
-| `~/.local/state/kiai/watch.json` | Replays the watcher has already uploaded, and renders it's following. |
-| `~/.config/systemd/user/kiai-watch.service` | The watcher service, written by `kiai watch install`. |
-
-The entries run `kiai launch <name>` rather than `osu-wine` directly so the session
-can be recorded first.
-
-**Official-server presets** run plain `osu-wine`. In that case osu-winello applies
-`POST_LAUNCH_ARGS` from its own config, so if you put a `-devserver` there, "bancho" will
-actually connect to that server. Use presets for server selection instead.
-
-### Rendering replays
-
-`kiai render` uploads a replay to your kiai server, which renders it with danser, and waits for
-the video. Point the client at the server once, with the server's `UPLOAD_TOKEN`:
-
-```sh
-kiai server set http://homelab:8080 --token <UPLOAD_TOKEN>
-kiai render ~/.local/share/osu-wine/osu!/Replays/some-replay.osr
-# Uploaded replay k3v9x2mq7a: Artist - Song [Insane], S by you
-# Rendering... 40%
-# Rendered: http://homelab:8080/replays/k3v9x2mq7a
-```
-
-- A .osr doesn't record which server the play was set on. kiai assumes the server of the preset
-  you launched last. Override it with `--devserver <host>` or `--official`.
-- The server downloads the map from a mirror. For maps no mirror has (unsubmitted, edited, or
-  updated since you played), it asks for the map, and kiai uploads it from your osu! Songs folder,
-  found through osu-winello, without video backgrounds. Pass `--songs <dir>` or `--osz <file>` to
-  choose it yourself.
-- `--no-wait` returns straight after the upload. Uploading the same file again returns the
-  existing replay.
-- `KIAI_SERVER_URL` and `KIAI_UPLOAD_TOKEN` override the saved server for one run.
 
 ### Replay watcher
 
-The watcher uploads every replay you export, so you never run `kiai render` yourself:
+The watcher uploads every replay you export to your kiai server, which renders it with danser:
 
 ```sh
 kiai watch install     # a systemd user service that starts at login
@@ -95,13 +39,45 @@ journalctl --user -u kiai-watch -f
 kiai watch uninstall
 ```
 
-- It watches osu! stable's `Replays` folder (where F2 exports go; found through osu-winello) and
-  lazer's `~/.local/share/osu/exports`. Set `"watchDirs"` in `config.json` to watch others.
-- A replay is uploaded once osu! has finished writing it, tagged with the server of the preset
-  you launched last. The watcher then follows the render, uploads the map from your Songs folder
-  if the server needs it, and logs the link. With Discord set up on the server, you also get a DM.
+- It watches osu! stable's `Replays` folder (where F2 exports go) and lazer's
+  `~/.local/share/osu/exports`. It finds osu! stable through the path
+  [osu-winello](https://github.com/NelloKudo/osu-winello) records. Set `"watchDirs"` in
+  `config.json` to watch other folders.
+- A replay is uploaded once osu! has finished writing it. A .osr doesn't record which server
+  the play was set on, so uploads are tagged with `"devserver"` from `config.json`, or as
+  official-server plays if it's unset.
+- The watcher then follows the render, uploads the map from your Songs folder if the server
+  needs it, and logs the link. With Discord set up on the server, you also get a DM.
 - Replays already there when the watcher first starts are skipped. `kiai watch --backlog` (run by
   hand) uploads them too.
+
+### Rendering by hand
+
+`kiai render` does the same for one replay and waits for the video:
+
+```sh
+kiai render ~/.local/share/osu-wine/osu!/Replays/some-replay.osr
+# Uploaded replay k3v9x2mq7a: Artist - Song [Insane], S by you
+# Rendering... 40%
+# Rendered: http://homelab:8080/replays/k3v9x2mq7a
+```
+
+- `--devserver <host>` or `--official` overrides the configured server for this replay.
+- The server downloads the map from a mirror. For maps no mirror has (unsubmitted, edited, or
+  updated since you played), it asks for the map, and kiai uploads it from your osu! Songs folder
+  without video backgrounds. Pass `--songs <dir>` or `--osz <file>` to choose it yourself.
+- `--no-wait` returns straight after the upload. Uploading the same file again returns the
+  existing replay.
+- `KIAI_SERVER_URL` and `KIAI_UPLOAD_TOKEN` override the saved server for one run.
+- `kiai skin upload <file.osk>` adds a skin for render presets.
+
+### Files
+
+| Path | What |
+|---|---|
+| `~/.config/kiai/config.json` | The server and upload token (`kiai server set`). Safe to hand-edit: `"devserver"` (e.g. `"gatari.pw"`) is the osu! server you play on, `"watchDirs"` and `"songsDir"` override where replays and maps are found. |
+| `~/.local/state/kiai/watch.json` | Replays the watcher has already uploaded, and renders it's following. |
+| `~/.config/systemd/user/kiai-watch.service` | The watcher service, written by `kiai watch install`. |
 
 ## Server
 
@@ -170,11 +146,12 @@ match has every map played and every player's score.
   `server matches import history.txt`). Any text with mp links or
   `osu.ppy.sh/multiplayer/rooms/<id>` links works too, and so does **Add** with a single link or
   id. Elitebotix hides recent qualifier links; kiai counts and skips them.
-- **Discovery:** osu! has no "matches this player played" endpoint. Instead, kiai walks osu!'s
-  list of every public stable lobby (`GET /matches`), staying two hours behind the newest one.
-  It fetches the lobbies with tournament-style names (`ACR: (A) vs (B)`, qualifier lobbies) or
-  your name, and keeps those you played in. Ended ranked play rooms list their players, so
-  yours are queued directly. Stable gets three crawl turns out of four. The stable crawl starts
+- **Discovery:** osu! has no "matches this player played" endpoint for stable. Instead, kiai
+  walks osu!'s list of every public stable lobby (`GET /matches`), staying two hours behind the
+  newest one. It fetches the lobbies with tournament-style names (`ACR: (A) vs (B)`, qualifier
+  lobbies) or your name, and keeps those you played in. Ranked play rooms come from your
+  profile's ranked play history (`osu.ppy.sh/users/<id>/ranked-play`), so all of them are queued
+  directly. Stable gets three crawl turns out of four. The stable crawl starts
   at the newest lobby; **Scan from match id** (or `server matches scan-from <id>`) backfills from
   an older match, for example to catch qualifiers Elitebotix hid. Pause either crawler on the
   page, or set `MATCH_DISCOVERY=false`.
@@ -327,9 +304,9 @@ Same privacy rules as the pages: private hostnames only. Uploads also need `UPLO
 | `GET /api/render/dry-run?replay=<id>` | Which preset the rules pick for a replay, and why |
 | `PUT /api/skins/:name` | Upload an .osk (raw body, bearer token); replaces a skin of that name |
 | `GET /replays/:id/video` | The rendered mp4, with byte ranges |
-| `GET /api/matches?…filters` | Paged matches. Filters: `q`, `sort` (`date`, `match_cost`, `maps`, `avg_score`, `accuracy`, `name`), `order`, `page`, `page_size`, `source` (`stable`, `lazer`), `with`, `vs` (comma-separated names or ids), `result` (`won`, `lost`), `played`, `tournament`, `min_cost`/`max_cost`, `min_maps`/`max_maps`, `date_from`/`date_to` |
+| `GET /api/matches?…filters` | Paged matches. Filters: `q`, `sort` (`date`, `match_cost`, `maps`, `avg_score`, `accuracy`, `name`), `order`, `page`, `page_size`, `hide` (match types to leave out: `tournament`, `romai`, `etx`, `omm` for the ROMAI, ETX and o!mm matchmaking bots, `ranked` for ranked play; comma-separated), `with`, `vs` (comma-separated names or ids), `result` (`won`, `lost`), `played`, `min_cost`/`max_cost`, `min_maps`/`max_maps`, `date_from`/`date_to` |
 | `GET /api/matches/:id` | One match: players with match costs, every map and score |
-| `GET /api/matches/scores?…filters` | Tournament scores: the `/api/scores` filters plus `player` (`me`, `all`, a name or id), `match` and `source` |
+| `GET /api/matches/scores?…filters` | Tournament scores: the `/api/scores` filters plus `player` (`me`, `all`, a name or id), `match` and `hide` |
 | `GET /api/matches/stats` | Record, match costs and tournament count |
 | `GET /api/matches/queue` | Fetch queue and discovery progress |
 | `POST /api/matches/import` | `{"text": "..."}` queues every match link in the text |
