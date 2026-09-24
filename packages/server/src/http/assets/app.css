@@ -128,10 +128,24 @@ details.danger summary { color: var(--alert); }
 
 .tablewrap { overflow-x: auto; }
 table.scores { width: 100%; border-collapse: collapse; }
-table.scores th, table.scores td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
-table.scores th { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+table.scores th, table.scores td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; white-space: nowrap; }
+table.scores th { font-size: 0.75rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 table.scores th.r, table.scores td.r { text-align: right; }
-table.scores td.map { min-width: 16rem; }
+table.scores td { font-variant-numeric: tabular-nums; }
+table.scores tbody tr:last-child td { border-bottom: none; }
+table.scores tbody tr:hover td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+table.scores .mods { flex-wrap: nowrap; }
+table.scores .rank { font-size: 0.85em; background: color-mix(in srgb, currentColor 14%, transparent); }
+/* Clipped cells share the width the fixed columns leave; hover shows the full text. */
+table.scores td.clip { max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+table.scores td.map { width: 100%; min-width: 14rem; }
+table.scores td a { color: var(--text); text-decoration: none; }
+table.scores td a:hover { color: var(--accent); text-decoration: underline; }
+table.scores td.map a, table.scores td.match a { font-weight: 500; }
+table.scores td.map:has(~ td.match) { width: 65%; }
+table.scores td.match { width: 35%; min-width: 10rem; }
+table.scores td.match:has(~ td.people) { width: 50%; min-width: 12rem; }
+table.scores td.people { width: 25%; min-width: 7rem; }
 table.kv { border-collapse: collapse; width: 100%; }
 table.kv th { text-align: left; color: var(--muted); font-weight: 500; padding: 0.25rem 1rem 0.25rem 0; white-space: nowrap; vertical-align: top; }
 table.kv td { padding: 0.25rem 0; }
