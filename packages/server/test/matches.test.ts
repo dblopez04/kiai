@@ -16,7 +16,7 @@ import {
   resolveUsers,
 } from "../src/matches/query.ts";
 import { enqueueMatches, queueOverview } from "../src/matches/queue.ts";
-import { fetchMatch, ingestMatch, setGameExcluded, setNotTournament, updateMatchSettings } from "../src/matches/store.ts";
+import { fetchMatch, ingestMatch, recomputeQualifierMatches, setGameExcluded, setNotTournament, updateMatchSettings } from "../src/matches/store.ts";
 import { createMatchStepper, type MatchWorkerDeps } from "../src/matches/worker.ts";
 import { createPpCalculator } from "../src/scores/pp.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
@@ -271,6 +271,31 @@ describe("saving matches", () => {
     expect(detail.players.find((p) => p.user_id === OPPONENT_A)!.username).toBe("RivalOne");
   });
 
+  it("gives qualifier lobbies no result, even in team vs or with two players", async () => {
+    const teams = (await getMatchDetail(db.sql, USER_ID, await save(teamMatch(90010, { name: "TST 2026: Qualifiers Lobby 3" }))))!;
+    const pair = (await getMatchDetail(
+      db.sql,
+      USER_ID,
+      await save(stableMatch({ id: 90011, name: "TST 2026: (Qualifiers) Lobby 4", games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 1], [OPPONENT_A, 2]] }] })),
+    ))!;
+    for (const detail of [teams, pair]) {
+      expect(detail.kind).toBe("qualifiers");
+      expect(detail.format).toBe("ffa");
+      expect([detail.red_wins, detail.blue_wins, detail.result, detail.tiebreaker]).toEqual([null, null, null, false]);
+      expect(detail.games.every((g) => g.winner === null)).toBe(true);
+      expect(detail.players.every((p) => p.side === null && p.tiebreaker_bonus === 0)).toBe(true);
+      expect(detail.me!.match_cost).toBeGreaterThan(0);
+    }
+    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ won: 0, lost: 0 });
+    // Qualifiers saved before this rule lose their score line when migrated.
+    await db.sql`update matches set red_wins = 1, blue_wins = 0 where id = ${pair.id}`;
+    await recomputeQualifierMatches(db.sql);
+    expect((await getMatchDetail(db.sql, USER_ID, pair.id))!.result).toBeNull();
+    // Marked as a casual lobby, it's an ordinary team match again.
+    await setNotTournament(db.sql, teams.id, true);
+    expect((await getMatchDetail(db.sql, USER_ID, teams.id))!.result).toBe("won");
+  });
+
   it("keeps the player's own profile when saving match players", async () => {
     await db.sql`update osu_users set pp = 5000 where id = ${USER_ID}`;
     await save(teamMatch(90002));
@@ -427,9 +452,9 @@ describe("saving matches", () => {
     await enqueueMatches(db.sql, [{ source: "lazer", externalId: 4002 }, { source: "stable", externalId: 90016 }], { addedVia: "manual" });
     await db.sql`update match_queue set failed = true, attempts = 1, last_error = 'This match is private on osu!.'`;
     await db.sql`alter table match_games drop column warmup`;
-    await db.sql`delete from schema_migrations where name = '013_match_game_warmup.sql'`;
+    await db.sql`delete from schema_migrations where name = '014_match_game_warmup.sql'`;
 
-    expect(await migrate(db.sql)).toEqual(["013_match_game_warmup.sql"]);
+    expect(await migrate(db.sql)).toEqual(["014_match_game_warmup.sql"]);
     const games = await db.sql`select warmup from match_games where match_id = ${id} order by position`;
     expect(games.map((g) => g.warmup)).toEqual([true, true, false, false, false]);
     const queued = await db.sql`select source, failed, last_error from match_queue order by source`;
@@ -535,6 +560,15 @@ describe("searching matches", () => {
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, played: 2, won: 1, lost: 1, tournaments: 3 });
   });
 
+  it("summarizes only the matches the filters keep", async () => {
+    const stats = (params: Record<string, string>) => matchStats(db.sql, USER_ID, parseMatchFilters(q(params)));
+    expect(await stats({ result: "won" })).toMatchObject({ matches: 1, played: 1, won: 1, lost: 0, tournaments: 1 });
+    expect(await stats({ q: "abc tester" })).toMatchObject({ matches: 1, won: 0, lost: 1 });
+    expect(await stats({ played: "true" })).toMatchObject({ matches: 2, played: 2 });
+    expect((await stats({ result: "lost" })).best_match_cost?.match_cost).toBe((await stats({ q: "abc tester" })).best_match_cost?.match_cost);
+    expect(await stats({ hide: "tournament" })).toMatchObject({ matches: 0, played: 0, avg_match_cost: null, best_match_cost: null });
+  });
+
   it("hides tournaments, qualifiers, each matchmaking bot, ranked play or other lobbies", async () => {
     const duel = (id: number, name: string) =>
       stableMatch({ id, name, games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 500_000], [OPPONENT_B, 400_000]] }] });
@@ -567,7 +601,7 @@ describe("searching matches", () => {
     expect(await shown()).toEqual([]);
     expect(parseMatchFilters(form("tournament", "ranked")).hide).toEqual(["qualifiers", "romai", "etx", "omm", "other"]);
     // Qualifiers count towards their tournament: ABC already has matches, QRT is new.
-    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 9, tournaments: 4 });
+    expect(await matchStats(db.sql, USER_ID, parseMatchFilters(q({ hide: "none" })))).toMatchObject({ matches: 9, tournaments: 4 });
     const scores = async (params: Record<string, string>) =>
       (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
     expect(await scores({ hide: "none" })).toBe(13);
@@ -585,7 +619,7 @@ describe("searching matches", () => {
     expect(await kind()).toBe("other");
     expect(await names({ hide: "tournament" })).toEqual([2]);
     expect(await names({ hide: "other" })).not.toContain(2);
-    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, tournaments: 2 });
+    expect(await matchStats(db.sql, USER_ID, parseMatchFilters(q({ hide: "none" })))).toMatchObject({ matches: 3, tournaments: 2 });
     const scores = async (params: Record<string, string>) =>
       (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
     expect(await scores({ hide: "tournament" })).toBe(2);
@@ -627,6 +661,31 @@ describe("match worker", () => {
     expect(overview.failed.map((f) => f.last_error).sort()).toEqual(["This match is private on osu!.", "osu! has no match with this id."]);
     // Known matches aren't queued again.
     expect(await enqueueMatches(db.sql, [{ source: "stable", externalId: 10 }], { addedVia: "import" })).toEqual({ queued: 0, known: 1 });
+  });
+
+  it("never fetches a saved match again when it's imported or discovered", async () => {
+    const old = new Date(Date.now() - 5 * 3600_000).toISOString();
+    await save(teamMatch(101));
+    const room = rankedPlayRoom(5001, [{ beatmapId: 21, scores: [[USER_ID, 1], [OPPONENT_A, 2]] }]);
+    osu.rooms.set(5001, room.events);
+    await ingestMatch(db.sql, (await fetchMatch(osu, "lazer", 5001))!, { addedVia: "discovery", pp: pp() });
+    osu.calls = [];
+
+    expect(await enqueueMatches(db.sql, parseMatchRefs("https://osu.ppy.sh/mp/101\nhttps://osu.ppy.sh/multiplayer/rooms/5001").refs, { addedVia: "import" })).toEqual({
+      queued: 0,
+      known: 2,
+    });
+    osu.lobbies = [{ id: 101, name: "TST 2026: (Red Rockets) vs (Blue Birds)", start_time: old, end_time: old }];
+    osu.rankedRooms = [room.room];
+    await scanStableFrom(db.sql, 101);
+    const step = worker();
+    for (let i = 0; i < 4; i++) await step();
+
+    // Both crawlers saw the saved matches, but neither queued them.
+    expect(osu.calls).toEqual(expect.arrayContaining(["listMatches id_asc 100", `listUserRankedPlayRooms ${USER_ID}`]));
+    expect(await db.sql`select * from match_queue`).toHaveLength(0);
+    expect(osu.calls.filter((c) => c.startsWith("getMatch") || c.startsWith("getRoomEvents"))).toEqual([]);
+    expect((await db.sql`select count(*)::int as n from matches`)[0]!.n).toBe(2);
   });
 
   it("refreshes matches still in progress", async () => {

@@ -7,7 +7,7 @@ import type { ApiMatch, ApiRoomEvents, ApiUserCompact } from "../osu/types.ts";
 import { PP_CALCULATOR, type PpCalculator } from "../scores/pp.ts";
 import { upsertBeatmaps } from "../scores/store.ts";
 import { analyzeMatch, type CostGame, type MatchAnalysis, type Team } from "./cost.ts";
-import { matchKind, normalizeRoom, normalizeStableMatch, parseMatchName, TOURNAMENT_KINDS, type MatchSource, type NormalizedMatch } from "./normalize.ts";
+import { matchKind, normalizeRoom, normalizeStableMatch, parseMatchName, QUALIFIERS_PATTERN, TOURNAMENT_KINDS, type MatchSource, type NormalizedMatch } from "./normalize.ts";
 
 const EVENT_PAGE = 101;
 // Auto-host lobbies can run for days; tournament matches are a page or two.
@@ -217,6 +217,7 @@ export async function analyzeSavedMatch(sql: Db, matchId: number): Promise<{ ana
     ezMultiplier: match.ez_multiplier,
     finished: match.end_time !== null,
     preferRed,
+    qualifiers: kind === "qualifiers",
   });
   return { analysis, gamesEnded: games.filter((g) => g.end_time !== null).length };
 }
@@ -260,6 +261,12 @@ export async function recomputeMatch(sql: Db, matchId: number): Promise<void> {
 export async function recomputeEzMatches(sql: Db): Promise<void> {
   const rows = await sql<{ match_id: number }[]>`select distinct match_id from match_scores where 'EZ' = any(mod_acronyms) order by match_id`;
   for (const { match_id } of rows) await recomputeMatch(sql, match_id);
+}
+
+/** Recompute every lobby named like a qualifier, after the rules for qualifiers changed. */
+export async function recomputeQualifierMatches(sql: Db): Promise<void> {
+  const rows = await sql<{ id: number }[]>`select id from matches where source = 'stable' and name ~* ${QUALIFIERS_PATTERN} order by id`;
+  for (const { id } of rows) await recomputeMatch(sql, id);
 }
 
 /** Recompute every saved match, after a migration added columns `recomputeMatch` fills. */

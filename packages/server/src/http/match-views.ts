@@ -29,9 +29,12 @@ type Html = ReturnType<typeof html>;
 const SOURCE_LABEL: Record<MatchSource, string> = { stable: "stable", lazer: "ranked play" };
 export const KIND_LABEL: Record<MatchKind, string> = { tournament: "tournament", qualifiers: "qualifiers", romai: "ROMAI", etx: "ETX", omm: "o!mm", ranked: "ranked play", other: "other" };
 
-/** Every type is ticked unless hidden; the `show=-` marker lets unticked boxes count (see `hiddenKinds`). */
+/**
+ * Every type is ticked unless hidden; the `show=-` marker lets unticked boxes count (see `hiddenKinds`).
+ * The all/none buttons need app.js, which shows them.
+ */
 export function kindFieldset(hidden: readonly MatchKind[]): Html {
-  return html`<fieldset class="inline"><legend>Type</legend>
+  return html`<fieldset class="inline" data-checkall><legend>Type <span class="small" data-checkall-buttons hidden>(<button type="button" class="link" data-checkall="true">all</button> · <button type="button" class="link" data-checkall="false">none</button>)</span></legend>
     <input type="hidden" name="show" value="-">
     ${MATCH_KINDS.map((kind) => html`<label class="check"><input type="checkbox" name="show" value="${kind}" ${checked(!hidden.includes(kind))}> ${KIND_LABEL[kind]}</label>`)}
   </fieldset>`;
@@ -155,7 +158,6 @@ function discoveryPanel(states: DiscoveryState[], enabled: boolean, osuConfigure
     <h2>Discovery</h2>
     ${!enabled ? html`<p class="alert">Discovery is off (<code>MATCH_DISCOVERY=false</code>). Imported and added matches are still fetched.</p>` : ""}
     ${!osuConfigured ? html`<p class="alert">Fetching matches needs <code>OSU_CLIENT_ID</code> and <code>OSU_CLIENT_SECRET</code> in <code>.env</code>.</p>` : ""}
-    <p class="muted small">osu! can't list one player's matches, so kiai reads its list of every public lobby, two hours behind, and checks the ones with tournament-style names (<code>ACR: (A) vs (B)</code>, qualifier lobbies) or your name. Ranked play rooms list their players, so yours are found directly.</p>
     ${states.map(row)}
   </section>`;
 }
@@ -212,7 +214,7 @@ function matchFilterForm(f: MatchFilters, names: Record<string, string>): Html {
 function matchTable(f: MatchFilters, page: MatchPage): Html {
   const link = (p: number) => `/matches?${matchFiltersToParams(f, { page: p }).toString()}`;
   return html`<section class="card" aria-label="Matches">
-    <h2>Matches <span class="muted small">${fmt.number(page.pagination.total_count)} match</span></h2>
+    <h2>Matches <span class="muted small">${fmt.number(page.pagination.total_count)} ${page.pagination.total_count === 1 ? "match" : "matches"}</span></h2>
     ${page.unknown_players.length ? html`<p class="alert">No saved match has a player called ${page.unknown_players.join(", ")}.</p>` : ""}
     ${page.matches.length === 0
       ? html`<p class="muted">No matches match these filters.</p>`
@@ -252,8 +254,8 @@ export function matchesPage(d: MatchesPageData): Html {
   return layout(
     "Matches",
     html`${d.notice ? html`<p class="notice" role="status">${d.notice}</p>` : ""}
-      ${statsPanel(d.stats)}
       <div class="grid2">${importPanel(d.queue)}${discoveryPanel(d.discovery, d.discoveryEnabled, d.osuConfigured)}</div>
+      ${statsPanel(d.stats)}
       ${matchFilterForm(d.filters, d.page.player_names)}
       ${matchTable(d.filters, d.page)}`,
     d.player,
@@ -286,11 +288,16 @@ function headline(m: MatchDetail): Html | string {
 
 const SEARCH_ICON = html`<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>`;
 
-/** A player's name linking to their osu! profile, then a search icon for your other matches with or against them. */
+/** A player's name linking to their osu! profile. */
+function profileLink(p: { user_id: number; username: string | null }): Html {
+  return html`<a href="${profile(p.user_id)}" target="_blank" rel="noopener noreferrer">${who(p)}</a>`;
+}
+
+/** {@link profileLink}, then a search icon for your other matches with or against them. */
 function playerLinks(p: { user_id: number; username: string | null; side: string | null }, m: MatchDetail, playerId: number): Html {
   const filter = p.side && p.side === m.me?.side ? "with" : "vs";
   const label = `Other matches ${filter === "with" ? "with" : "against"} ${who(p)}`;
-  return html`<a href="${profile(p.user_id)}" target="_blank" rel="noopener noreferrer">${who(p)}</a>${
+  return html`${profileLink(p)}${
     p.user_id === playerId ? "" : html` <a class="icon-link" href="/matches?${filter}=${p.user_id}" title="${label}" aria-label="${label}">${SEARCH_ICON}</a>`
   }`;
 }
@@ -315,7 +322,6 @@ function playersTable(m: MatchDetail, playerId: number): Html {
             </tr>`,
           )}</tbody>
         </table></div>`}
-    <p class="muted small">Bathbot's formula: each map's score over that map's average, averaged, plus 0.5; × up to 1.5 for playing every map; × 1.02 per mod combination beyond two; plus up to 0.5 for the tiebreaker${m.tiebreaker ? " (this match went to one)" : ""}. Zero scores are left out${m.ez_multiplier !== 1 ? `, and EZ scores count ×${m.ez_multiplier}` : ""}. Hover a cost for its parts.</p>
     <details>
       <summary>Warmups and settings</summary>
       <form method="post" action="/matches/${m.id}/settings" class="row wrap">
@@ -324,17 +330,15 @@ function playersTable(m: MatchDetail, playerId: number): Html {
         <label>EZ multiplier <input type="number" name="ez_multiplier" min="0.1" max="10" step="0.01" value="${m.ez_multiplier}" class="num"></label>
         <button class="primary">Recalculate</button>
       </form>
-      <p class="muted small">${warmupNote(m)} To leave out one map anywhere in the match, open ⋯ on that map.</p>
+      ${warmupNote(m) ? html`<p class="muted small">${warmupNote(m)}</p>` : ""}
     </details>
   </section>`;
 }
 
 function warmupNote(m: MatchDetail): string {
-  if (m.warmups !== null) return `The first ${m.warmups === 1 ? "map is a warmup" : `${m.warmups} maps are warmups`}; empty the box to find them from the host.`;
-  if (m.kind !== "tournament" && m.kind !== "qualifiers") return "With the warmup box empty, only tournament lobbies find warmups from the host.";
+  if (m.warmups !== null || (m.kind !== "tournament" && m.kind !== "qualifiers")) return "";
   const found = m.games.filter((g) => g.warmup).map((g) => `#${g.position}`);
-  const rule = "maps played while a player held the host, as when a ref hands it to a captain to pick one (two at most)";
-  return found.length ? `Warmups found from the host: ${found.join(", ")} (${rule}).` : `No warmups found from the host (${rule}).`;
+  return found.length ? `Warmups found from the host: ${found.join(", ")}.` : "No warmups found from the host.";
 }
 
 function mapTotals(red: number, blue: number): Html {
@@ -374,7 +378,7 @@ function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
           <input type="hidden" name="excluded" value="${g.excluded ? "false" : "true"}">
           ${g.excluded
             ? html`<button>Count this map again</button>`
-            : html`<button>Leave out of the match</button><p class="muted small">For a map that shouldn't count, like a tiebreaker played for fun. Match costs and the score line are worked out again without it.</p>`}
+            : html`<button>Leave out of the match</button>`}
         </form>
       </details>`
     : "";
@@ -393,7 +397,7 @@ function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
           <thead><tr><th>Player</th><th class="r">Score</th><th class="r">Acc</th><th class="r">Combo</th><th class="r">Miss</th><th>Rank</th><th>Mods</th><th class="r">PP</th></tr></thead>
           <tbody>${g.scores.map(
             (s) => html`<tr class="${[s.user_id === playerId ? "me" : "", s.side ? `row-${s.side}` : ""].join(" ")}">
-              <td>${sideChip(s.side)} ${playerLinks(s, m, playerId)}${s.passed ? "" : html` <span class="muted small">failed</span>`}</td>
+              <td>${sideChip(s.side)} ${profileLink(s)}${s.passed ? "" : html` <span class="muted small">failed</span>`}</td>
               ${scoreCell(s, m.ez_multiplier)}
               <td class="r">${fmt.acc(s.accuracy)}</td>
               <td class="r">${fmt.number(s.max_combo)}${b?.max_combo ? html`<span class="muted">/${fmt.number(b.max_combo)}</span>` : ""}</td>
@@ -432,9 +436,7 @@ export function matchPage(m: MatchDetail, player: Player, notice?: string): Html
       ${m.kind === "tournament" || m.kind === "qualifiers" || (m.kind === "other" && m.not_tournament)
         ? html`<form method="post" action="/matches/${m.id}/tournament" class="row wrap small">
             <input type="hidden" name="not_tournament" value="${m.not_tournament ? "false" : "true"}">
-            ${m.not_tournament
-              ? html`<span class="muted">Left out of tournaments and the tournament count.</span><button>Count as a tournament</button>`
-              : html`<span class="muted">A casual lobby with a tournament-style name?</span><button>Not a tournament</button>`}
+            <button>${m.not_tournament ? "Count as a tournament" : "Not a tournament"}</button>
           </form>`
         : ""}
     </section>
@@ -458,7 +460,7 @@ export function tournamentScoresPage(player: Player, f: TournamentScoreFilters, 
     "Tournament scores",
     html`${filterForm(f, { action: "/matches/scores", extra })}
     <section class="card" aria-label="Tournament scores">
-      <h2>Tournament scores <span class="muted small">${fmt.number(page.pagination.total_count)} match</span></h2>
+      <h2>Tournament scores <span class="muted small">${fmt.number(page.pagination.total_count)} ${page.pagination.total_count === 1 ? "score" : "scores"}</span></h2>
       ${page.unknown_player ? html`<p class="alert">No saved match has a player called ${page.unknown_player}.</p>` : ""}
       <p class="muted small">Every score from saved matches. NoFail is ignored in mod filters (NM means no other mods). PP is osu!'s for ranked play, otherwise calculated locally without NoFail.</p>
       ${page.scores.length === 0

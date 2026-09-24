@@ -51,6 +51,8 @@ export interface CostOptions {
   finished: boolean;
   /** Who is red in a 1v1, when both players are known: the first player in "A vs B". */
   preferRed?: number | undefined;
+  /** A qualifier lobby: everyone plays for themselves, so no sides, score line or tiebreaker. */
+  qualifiers?: boolean;
 }
 
 export interface PlayerCost {
@@ -172,7 +174,7 @@ export function analyzeMatch(games: readonly CostGame[], options: CostOptions): 
   const red = teamWins.get("red");
   const blue = teamWins.get("blue");
   const winDiff = red !== undefined && blue !== undefined ? Math.abs(red - blue) : 0;
-  const tiebreakerGame = options.finished && counted.length > 4 && winDiff === 1 ? counted.at(-1) : undefined;
+  const tiebreakerGame = options.finished && !options.qualifiers && counted.length > 4 && winDiff === 1 ? counted.at(-1) : undefined;
   const tiebreakerPlayers = new Set((tiebreakerGame ? scoresByGame.get(tiebreakerGame.id)! : []).map((s) => s.userId));
 
   const gamesCount = counted.length;
@@ -208,10 +210,13 @@ export function analyzeMatch(games: readonly CostGame[], options: CostOptions): 
 
   // Sides and the score line. Team matches use the lobby teams; a two-player head-to-head gets
   // one side each, as Bathbot does; anything else (qualifiers, free-for-alls) has no score line.
+  // Qualifier lobbies stay free-for-alls, even in team vs or with only two players in them.
   const firstCounted = counted[0] ?? ended[0] ?? games[0];
   let format: MatchFormat = "ffa";
   const sideOf = new Map<number, Side>();
-  if (firstCounted && TEAM_TYPES.has(firstCounted.teamType ?? "")) {
+  if (options.qualifiers) {
+    format = "ffa";
+  } else if (firstCounted && TEAM_TYPES.has(firstCounted.teamType ?? "")) {
     format = "team";
     for (const p of players) if (p.team === "red" || p.team === "blue") sideOf.set(p.userId, p.team);
   } else {
