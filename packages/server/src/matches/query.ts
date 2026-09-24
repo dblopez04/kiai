@@ -705,7 +705,15 @@ export interface MatchStats {
   tournaments: number;
 }
 
-export async function matchStats(sql: Sql, playerId: number): Promise<MatchStats> {
+/** The player's record over the matches the filters keep (all of them by default); sort and page don't matter. */
+export async function matchStats(
+  sql: Sql,
+  playerId: number,
+  f: MatchFilters = parseMatchFilters(new URLSearchParams()),
+  osu: Pick<OsuClient, "getUser"> | null = null,
+): Promise<MatchStats> {
+  const { ids } = await resolveUsers(sql, [...f.with, ...f.vs], osu);
+  const where = matchConditions(sql, playerId, f, ids);
   const [[summary], [best]] = await Promise.all([
     sql`
       select count(*)::int as matches,
@@ -714,10 +722,11 @@ export async function matchStats(sql: Sql, playerId: number): Promise<MatchStats
         count(*) filter (where (case me.side when 'red' then m.red_wins - m.blue_wins when 'blue' then m.blue_wins - m.red_wins end) < 0)::int as lost,
         avg(me.match_cost) as avg_cost,
         count(distinct lower(m.acronym)) filter (where ${kindOf(sql)} in ('tournament', 'qualifiers'))::int as tournaments
-      from matches m left join match_players me on me.match_id = m.id and me.user_id = ${playerId}`,
+      from matches m left join match_players me on me.match_id = m.id and me.user_id = ${playerId}
+      where ${where}`,
     sql`
-      select m.id as match_id, m.name, me.match_cost from match_players me join matches m on m.id = me.match_id
-      where me.user_id = ${playerId} and me.games_played >= 3 order by me.match_cost desc limit 1`,
+      select m.id as match_id, m.name, me.match_cost from matches m join match_players me on me.match_id = m.id and me.user_id = ${playerId}
+      where me.games_played >= 3 and ${where} order by me.match_cost desc limit 1`,
   ]);
   return {
     matches: summary?.matches ?? 0,

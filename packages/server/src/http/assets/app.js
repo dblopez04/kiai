@@ -1,5 +1,5 @@
 // Progressive enhancement for the server-rendered pages. Everything works without it except the
-// mod filter buttons, live sync progress and the score link check.
+// mod filter buttons, the all/none type buttons, live sync progress and the score link check.
 
 const STATES = ["off", "required", "optional", "excluded"];
 const FIELDS = { required: "mods", optional: "mods_optional", excluded: "mods_excluded" };
@@ -41,6 +41,15 @@ function setupFilterForm(form) {
     for (const element of form.elements) {
       if ((element.tagName === "INPUT" || element.tagName === "SELECT") && element.name && element.value === "") element.disabled = true;
     }
+  });
+}
+
+function setupCheckAll(fieldset) {
+  fieldset.querySelector("[data-checkall-buttons]").hidden = false;
+  fieldset.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-checkall]");
+    if (!button) return;
+    for (const box of fieldset.querySelectorAll('input[type="checkbox"]')) box.checked = button.dataset.checkall === "true";
   });
 }
 
@@ -100,6 +109,7 @@ function setupScoreLink(box) {
 document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll("[data-modfilter]").forEach(setupModFilter);
   document.querySelectorAll("[data-filters]").forEach(setupFilterForm);
+  document.querySelectorAll("fieldset[data-checkall]").forEach(setupCheckAll);
   document.querySelectorAll("[data-sync-slot]").forEach(setupSyncPolling);
   document.querySelectorAll("[data-scorelink]").forEach(setupScoreLink);
 });
