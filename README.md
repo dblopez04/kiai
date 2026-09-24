@@ -161,6 +161,9 @@ match has every map played and every player's score.
   mod combination beyond two (NoFail doesn't count). A tiebreaker adds up to 0.5. Zero scores
   are left out. EZ scores count ×1.8. Each match page can set warmups, maps to skip at the end,
   and the EZ multiplier; changing them recalculates the match.
+- **Type boxes:** tournament, qualifiers (tournament-style names with qualifiers, quals or
+  tryouts in them, which still count towards their tournament), the ROMAI, ETX and o!mm
+  matchmaking bots, ranked play, and other. All start ticked; untick one to hide it.
 - **Searching matches:** by name, teammates (**With**: players on your side), opponents
   (**Against**), result, source, match cost, maps played and date. Sort by date, match cost,
   maps, average score, accuracy or name. In a 1v1 the other player is your opponent. In a
@@ -170,8 +173,8 @@ match has every map played and every player's score.
   working after a name change.
 - **Not a tournament:** a casual lobby with a tournament-style name (`ABC: (you) vs (friend)`)
   counts as a tournament until you press **Not a tournament** on its match page. It then shows
-  as plain stable multiplayer: the tournament Type box no longer covers it, and it
-  leaves the tournament count. Fetching the match again keeps the mark; **Count as a
+  as plain stable multiplayer: it moves from the tournament Type box to **other** (with every
+  lobby that has no tournament-style name), and it leaves the tournament count. Fetching the match again keeps the mark; **Count as a
   tournament** undoes it.
 - **Tournament scores** searches every score in saved matches with the score library's filters
   (mods, PP, stars, speed, rank, best per map...), plus player (you, anyone, or `all`), match
@@ -338,7 +341,7 @@ Same privacy rules as the pages: private hostnames only. Uploads also need `UPLO
 | `GET /api/render/dry-run?replay=<id>` | Which preset the rules pick for a replay, and why |
 | `PUT /api/skins/:name` | Upload an .osk (raw body, bearer token); replaces a skin of that name |
 | `GET /replays/:id/video` | The rendered mp4, with byte ranges |
-| `GET /api/matches?…filters` | Paged matches. Filters: `q`, `sort` (`date`, `match_cost`, `maps`, `avg_score`, `accuracy`, `name`), `order`, `page`, `page_size`, `hide` (match types to leave out: `tournament`, `romai`, `etx`, `omm` for the ROMAI, ETX and o!mm matchmaking bots, `ranked` for ranked play; comma-separated), `with`, `vs` (comma-separated names or ids), `result` (`won`, `lost`), `played`, `min_cost`/`max_cost`, `min_maps`/`max_maps`, `date_from`/`date_to` |
+| `GET /api/matches?…filters` | Paged matches. Filters: `q`, `sort` (`date`, `match_cost`, `maps`, `avg_score`, `accuracy`, `name`), `order`, `page`, `page_size`, `hide` (match types to leave out: `tournament`, `qualifiers`, `romai`, `etx`, `omm` for the ROMAI, ETX and o!mm matchmaking bots, `ranked` for ranked play, `other` for any other lobby; comma-separated), `with`, `vs` (comma-separated names or ids), `result` (`won`, `lost`), `played`, `min_cost`/`max_cost`, `min_maps`/`max_maps`, `date_from`/`date_to` |
 | `GET /api/matches/:id` | One match: players with match costs, every map and score |
 | `GET /api/matches/scores?…filters` | Tournament scores: the `/api/scores` filters plus `player` (`me`, `all`, a name or id), `match` and `hide` |
 | `GET /api/matches/stats` | Record, match costs and tournament count |

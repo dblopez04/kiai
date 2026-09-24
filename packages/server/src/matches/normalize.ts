@@ -260,14 +260,25 @@ export function matchmakingBot(name: string): MatchmakingBot | null {
   return MATCHMAKING_NAMES.find(([, pattern]) => pattern.test(name))?.[0] ?? null;
 }
 
-/** What a match is: a tournament match, one matchmaking bot's lobby, a ranked play room, or (not filterable) any other lobby. */
-export const MATCH_KINDS = ["tournament", "romai", "etx", "omm", "ranked"] as const;
-export type MatchKind = (typeof MATCH_KINDS)[number] | "other";
+// A qualifier or tryout lobby's name ("ACR: Qualifiers Lobby 3", "ACR: (Tryouts) Lobby A"). Like
+// `matchmakingPattern`, it works in JavaScript and in Postgres (`~*`), which has no `\b`.
+export const QUALIFIERS_PATTERN = "(^|[^a-z0-9_])(qualifiers?|qualification|quals|tryouts?)(?![a-z0-9_])";
+const QUALIFIERS_NAME = new RegExp(QUALIFIERS_PATTERN, "i");
+
+/**
+ * What a match is: a tournament match, a tournament's qualifier lobby, one matchmaking bot's lobby,
+ * a ranked play room, or any other lobby (including tournament-style names marked as not a tournament).
+ */
+export const MATCH_KINDS = ["tournament", "qualifiers", "romai", "etx", "omm", "ranked", "other"] as const;
+export type MatchKind = (typeof MATCH_KINDS)[number];
 
 /** `notTournament`: the player marked a tournament-style name as a casual lobby. */
 export function matchKind(match: { source: MatchSource; name: string; acronym: string | null; notTournament?: boolean }): MatchKind {
   if (match.source === "lazer") return "ranked";
-  return matchmakingBot(match.name) ?? (match.acronym !== null && !match.notTournament ? "tournament" : "other");
+  const bot = matchmakingBot(match.name);
+  if (bot) return bot;
+  if (match.acronym === null || match.notTournament) return "other";
+  return QUALIFIERS_NAME.test(match.name) ? "qualifiers" : "tournament";
 }
 
 /** Lobby names worth fetching during discovery: tournament-style names, or ones naming the player. */

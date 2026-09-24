@@ -329,36 +329,41 @@ describe("searching matches", () => {
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, played: 2, won: 1, lost: 1, tournaments: 3 });
   });
 
-  it("hides tournaments, each matchmaking bot or ranked play, but never other lobbies", async () => {
+  it("hides tournaments, qualifiers, each matchmaking bot, ranked play or other lobbies", async () => {
     const duel = (id: number, name: string) =>
       stableMatch({ id, name, games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 500_000], [OPPONENT_B, 400_000]] }] });
     await save(duel(4, "ROMAI: (tester) vs (RivalTwo)"));
     await save(duel(5, "ETX: (tester) vs (RivalTwo)"));
     await save(duel(6, "o!mm Ranked: tester vs RivalTwo"));
     await save(duel(7, "tester's lobby"));
+    await save(duel(8, "ABC: Qualifiers Lobby 3"));
+    await save(duel(9, "QRT: (Tryouts) Lobby A"));
     const all = (await listMatches(db.sql, USER_ID, parseMatchFilters(q()))).matches;
     expect(Object.fromEntries(all.map((m) => [m.external_id, m.kind]))).toEqual({
-      1: "tournament", 2: "tournament", 3: "tournament", 4: "romai", 5: "etx", 6: "omm", 7: "other",
+      1: "tournament", 2: "tournament", 3: "tournament", 4: "romai", 5: "etx", 6: "omm", 7: "other", 8: "qualifiers", 9: "qualifiers",
     });
-    expect((await names({ hide: "tournament" })).sort()).toEqual([4, 5, 6, 7]);
-    expect((await names({ hide: "romai" })).sort()).toEqual([1, 2, 3, 5, 6, 7]);
-    expect((await names({ hide: "romai,etx,omm" })).sort()).toEqual([1, 2, 3, 7]);
-    // `other` has no box, so it can't be hidden, like any unknown kind.
-    expect((await names({ hide: "other,bogus" })).length).toBe(7);
+    expect((await names({ hide: "tournament" })).sort()).toEqual([4, 5, 6, 7, 8, 9]);
+    expect((await names({ hide: "qualifiers" })).sort()).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect((await names({ hide: "romai" })).sort()).toEqual([1, 2, 3, 5, 6, 7, 8, 9]);
+    expect((await names({ hide: "romai,etx,omm" })).sort()).toEqual([1, 2, 3, 7, 8, 9]);
+    expect((await names({ hide: "other,bogus" })).sort()).toEqual([1, 2, 3, 4, 5, 6, 8, 9]);
     // The form sends the ticked boxes, and a marker so unticking all of them still counts.
     const form = (...shown: string[]) => new URLSearchParams([["show", "-"], ...shown.map((kind): [string, string] => ["show", kind])]);
     const shown = async (...kinds: string[]) =>
       (await listMatches(db.sql, USER_ID, parseMatchFilters(form(...kinds)))).matches.map((m) => m.external_id).sort();
-    expect(await shown("tournament", "romai", "etx", "omm", "ranked")).toEqual([1, 2, 3, 4, 5, 6, 7]);
-    expect(await shown("tournament", "ranked")).toEqual([1, 2, 3, 7]);
-    expect(await shown()).toEqual([7]);
-    expect(parseMatchFilters(form("tournament", "ranked")).hide).toEqual(["romai", "etx", "omm"]);
-    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 7, tournaments: 3 });
+    expect(await shown("tournament", "qualifiers", "romai", "etx", "omm", "ranked", "other")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(await shown("tournament", "ranked")).toEqual([1, 2, 3]);
+    expect(await shown("other")).toEqual([7]);
+    expect(await shown()).toEqual([]);
+    expect(parseMatchFilters(form("tournament", "ranked")).hide).toEqual(["qualifiers", "romai", "etx", "omm", "other"]);
+    // Qualifiers count towards their tournament: ABC already has matches, QRT is new.
+    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 9, tournaments: 4 });
     const scores = async (params: Record<string, string>) =>
       (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
-    expect(await scores({})).toBe(11);
-    expect(await scores({ hide: "romai,etx,omm" })).toBe(8);
-    expect(await scores({ hide: "tournament" })).toBe(4);
+    expect(await scores({})).toBe(13);
+    expect(await scores({ hide: "romai,etx,omm" })).toBe(10);
+    expect(await scores({ hide: "tournament" })).toBe(6);
+    expect(await scores({ hide: "qualifiers,other" })).toBe(10);
   });
 
   it("stops counting a casual lobby with a tournament-style name as a tournament", async () => {
@@ -368,6 +373,7 @@ describe("searching matches", () => {
     expect(await setNotTournament(db.sql, id, true)).toBe(true);
     expect(await kind()).toBe("other");
     expect(await names({ hide: "tournament" })).toEqual([2]);
+    expect(await names({ hide: "other" })).not.toContain(2);
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, tournaments: 2 });
     const scores = async (params: Record<string, string>) =>
       (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;

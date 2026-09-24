@@ -18,6 +18,7 @@ import {
 import type { Side } from "./cost.ts";
 import {
   MATCH_KINDS,
+  QUALIFIERS_PATTERN,
   MATCHMAKING_BOTS,
   matchKind,
   matchmakingPattern,
@@ -42,7 +43,7 @@ export interface MatchFilters {
   order: "asc" | "desc";
   page: number;
   pageSize: number;
-  /** Kinds left out; other lobbies are always shown. */
+  /** Kinds left out. */
   hide: (typeof MATCH_KINDS)[number][];
   /** User ids (or names, until resolved) that played on the player's side. */
   with: string[];
@@ -268,8 +269,9 @@ export const kindOf = (sql: Sql) => {
   return sql`(case
     when m.source = 'lazer' then 'ranked'
     ${bots.reduce((all, when) => sql`${all} ${when}`)}
-    when m.acronym is not null and not m.not_tournament then 'tournament'
-    else 'other' end)`;
+    when m.acronym is null or m.not_tournament then 'other'
+    when m.name ~* ${QUALIFIERS_PATTERN} then 'qualifiers'
+    else 'tournament' end)`;
 };
 
 const iso = (value: unknown) => (value instanceof Date ? value.toISOString() : typeof value === "string" ? value : null);
@@ -690,7 +692,7 @@ export async function matchStats(sql: Sql, playerId: number): Promise<MatchStats
         count(*) filter (where (case me.side when 'red' then m.red_wins - m.blue_wins when 'blue' then m.blue_wins - m.red_wins end) > 0)::int as won,
         count(*) filter (where (case me.side when 'red' then m.red_wins - m.blue_wins when 'blue' then m.blue_wins - m.red_wins end) < 0)::int as lost,
         avg(me.match_cost) as avg_cost,
-        count(distinct lower(m.acronym)) filter (where ${kindOf(sql)} = 'tournament')::int as tournaments
+        count(distinct lower(m.acronym)) filter (where ${kindOf(sql)} in ('tournament', 'qualifiers'))::int as tournaments
       from matches m left join match_players me on me.match_id = m.id and me.user_id = ${playerId}`,
     sql`
       select m.id as match_id, m.name, me.match_cost from match_players me join matches m on m.id = me.match_id

@@ -62,8 +62,7 @@ describe("match pages", () => {
     expect(body).toContain("3–2");
     expect(body).toContain("Mate");
     expect(body).toContain("Stable tournament lobbies");
-    for (const kind of ["tournament", "romai", "etx", "omm", "ranked"]) expect(body).toContain(`name="show" value="${kind}" checked`);
-    expect(body).not.toContain(`name="show" value="other"`);
+    for (const kind of ["tournament", "qualifiers", "romai", "etx", "omm", "ranked", "other"]) expect(body).toContain(`name="show" value="${kind}" checked`);
   });
 
   it("shows one match with every map, score and match cost", async () => {
