@@ -22,7 +22,7 @@ import {
 import type { QueueOverview } from "../matches/queue.ts";
 import type { Player } from "../player.ts";
 import type { BeatmapView } from "../scores/query.ts";
-import { checked, filterForm, fmt, layout, modChips, numberValue, rankClass, rankLabel } from "./views.ts";
+import { checked, filterForm, fmt, layout, modChips, numberValue, pager, rankClass, rankLabel } from "./views.ts";
 
 type Html = ReturnType<typeof html>;
 
@@ -32,15 +32,6 @@ const beatmapTitle = (b: BeatmapView | null, beatmapId: number | null) =>
   b ? `${b.artist ?? "Unknown artist"} - ${b.title ?? "Unknown title"}` : beatmapId ? `Beatmap #${beatmapId} (not on osu!)` : "Unknown beatmap";
 const who = (p: { username: string | null; id?: number; user_id?: number }) => p.username ?? `#${p.id ?? p.user_id}`;
 const profile = (id: number) => `https://osu.ppy.sh/users/${id}`;
-
-function pager(pagination: MatchPage["pagination"], link: (page: number) => string): Html | string {
-  if (pagination.total_pages <= 1) return "";
-  return html`<nav class="pager">
-    ${pagination.page > 1 ? html`<a href="${link(pagination.page - 1)}">← Previous</a>` : html`<span></span>`}
-    <span>Page ${pagination.page} of ${fmt.number(pagination.total_pages)}</span>
-    ${pagination.page < pagination.total_pages ? html`<a href="${link(pagination.page + 1)}">Next →</a>` : html`<span></span>`}
-  </nav>`;
-}
 
 function resultChip(result: MatchListItem["result"]): Html | string {
   if (result === "won") return html`<span class="chip win">W</span>`;

@@ -135,7 +135,12 @@ table.scores td.map { min-width: 16rem; }
 table.kv { border-collapse: collapse; width: 100%; }
 table.kv th { text-align: left; color: var(--muted); font-weight: 500; padding: 0.25rem 1rem 0.25rem 0; white-space: nowrap; vertical-align: top; }
 table.kv td { padding: 0.25rem 0; }
-.pager { display: flex; justify-content: space-between; align-items: center; margin-top: 0.8rem; }
+.pager { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 0.3rem; margin-top: 0.8rem; }
+.pager .button { min-width: 2.2rem; padding: 0.3rem 0.6rem; text-align: center; font-variant-numeric: tabular-nums; }
+.pager .button.current { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; cursor: default; }
+.pager .button.disabled { opacity: 0.45; cursor: default; }
+.pager .button.disabled:hover { border-color: var(--line); }
+.pager .gap { color: var(--muted); padding: 0 0.2rem; }
 
 .cover { background-size: cover; background-position: center; padding: 0; overflow: hidden; }
 .coverinner { display: flex; gap: 1.2rem; align-items: center; padding: 1.5rem; background: linear-gradient(90deg, color-mix(in srgb, var(--card) 95%, transparent), color-mix(in srgb, var(--card) 70%, transparent)); }
