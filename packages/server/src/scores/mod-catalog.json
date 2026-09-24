@@ -1,0 +1,626 @@
+[
+  {
+    "acronym": "EZ",
+    "name": "Easy",
+    "type": "DifficultyReduction",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "NF",
+    "name": "No Fail",
+    "type": "DifficultyReduction",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "HT",
+    "name": "Half Time",
+    "type": "DifficultyReduction",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "DC",
+    "name": "Daycore",
+    "type": "DifficultyReduction",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "HR",
+    "name": "Hard Rock",
+    "type": "DifficultyIncrease",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "SD",
+    "name": "Sudden Death",
+    "type": "DifficultyIncrease",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "PF",
+    "name": "Perfect",
+    "type": "DifficultyIncrease",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "DT",
+    "name": "Double Time",
+    "type": "DifficultyIncrease",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "NC",
+    "name": "Nightcore",
+    "type": "DifficultyIncrease",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "HD",
+    "name": "Hidden",
+    "type": "DifficultyIncrease",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "TC",
+    "name": "Traceable",
+    "type": "DifficultyIncrease",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "FL",
+    "name": "Flashlight",
+    "type": "DifficultyIncrease",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "BL",
+    "name": "Blinds",
+    "type": "DifficultyIncrease",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "ST",
+    "name": "Strict Tracking",
+    "type": "DifficultyIncrease",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "AC",
+    "name": "Accuracy Challenge",
+    "type": "DifficultyIncrease",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "TP",
+    "name": "Target Practice",
+    "type": "Conversion",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "DA",
+    "name": "Difficulty Adjust",
+    "type": "Conversion",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "CL",
+    "name": "Classic",
+    "type": "Conversion",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "RD",
+    "name": "Random",
+    "type": "Conversion",
+    "modes": [
+      0,
+      1,
+      3
+    ]
+  },
+  {
+    "acronym": "MR",
+    "name": "Mirror",
+    "type": "Conversion",
+    "modes": [
+      0,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "AL",
+    "name": "Alternate",
+    "type": "Conversion",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "SG",
+    "name": "Single Tap",
+    "type": "Conversion",
+    "modes": [
+      0,
+      1
+    ]
+  },
+  {
+    "acronym": "AT",
+    "name": "Autoplay",
+    "type": "Automation",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "CN",
+    "name": "Cinema",
+    "type": "Automation",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "RX",
+    "name": "Relax",
+    "type": "Automation",
+    "modes": [
+      0,
+      1,
+      2
+    ]
+  },
+  {
+    "acronym": "AP",
+    "name": "Autopilot",
+    "type": "Automation",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "SO",
+    "name": "Spun Out",
+    "type": "Automation",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "TR",
+    "name": "Transform",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "WG",
+    "name": "Wiggle",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "SI",
+    "name": "Spin In",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "GR",
+    "name": "Grow",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "DF",
+    "name": "Deflate",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "WU",
+    "name": "Wind Up",
+    "type": "Fun",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "WD",
+    "name": "Wind Down",
+    "type": "Fun",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "BR",
+    "name": "Barrel Roll",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "AD",
+    "name": "Approach Different",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "MU",
+    "name": "Muted",
+    "type": "Fun",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "NS",
+    "name": "No Scope",
+    "type": "Fun",
+    "modes": [
+      0,
+      2
+    ]
+  },
+  {
+    "acronym": "MG",
+    "name": "Magnetised",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "RP",
+    "name": "Repel",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "AS",
+    "name": "Adaptive Speed",
+    "type": "Fun",
+    "modes": [
+      0,
+      1,
+      3
+    ]
+  },
+  {
+    "acronym": "FR",
+    "name": "Freeze Frame",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "BU",
+    "name": "Bubbles",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "SY",
+    "name": "Synesthesia",
+    "type": "Fun",
+    "modes": [
+      0,
+      2
+    ]
+  },
+  {
+    "acronym": "DP",
+    "name": "Depth",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "BM",
+    "name": "Bloom",
+    "type": "Fun",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "TD",
+    "name": "Touch Device",
+    "type": "System",
+    "modes": [
+      0
+    ]
+  },
+  {
+    "acronym": "SV2",
+    "name": "Score V2",
+    "type": "System",
+    "modes": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "acronym": "SR",
+    "name": "Simplified Rhythm",
+    "type": "DifficultyReduction",
+    "modes": [
+      1
+    ]
+  },
+  {
+    "acronym": "SW",
+    "name": "Swap",
+    "type": "Conversion",
+    "modes": [
+      1
+    ]
+  },
+  {
+    "acronym": "CS",
+    "name": "Constant Speed",
+    "type": "Conversion",
+    "modes": [
+      1,
+      3
+    ]
+  },
+  {
+    "acronym": "FF",
+    "name": "Floating Fruits",
+    "type": "Fun",
+    "modes": [
+      2
+    ]
+  },
+  {
+    "acronym": "MF",
+    "name": "Moving Fast",
+    "type": "Fun",
+    "modes": [
+      2
+    ]
+  },
+  {
+    "acronym": "NR",
+    "name": "No Release",
+    "type": "DifficultyReduction",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "FI",
+    "name": "Fade In",
+    "type": "DifficultyIncrease",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "CO",
+    "name": "Cover",
+    "type": "DifficultyIncrease",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "DS",
+    "name": "Dual Stages",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "IN",
+    "name": "Invert",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "HO",
+    "name": "Hold Off",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "1K",
+    "name": "One Key",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "2K",
+    "name": "Two Keys",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "3K",
+    "name": "Three Keys",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "4K",
+    "name": "Four Keys",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "5K",
+    "name": "Five Keys",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "6K",
+    "name": "Six Keys",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "7K",
+    "name": "Seven Keys",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "8K",
+    "name": "Eight Keys",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "9K",
+    "name": "Nine Keys",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  },
+  {
+    "acronym": "10K",
+    "name": "Ten Keys",
+    "type": "Conversion",
+    "modes": [
+      3
+    ]
+  }
+]

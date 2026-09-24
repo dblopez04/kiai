@@ -1,0 +1,41 @@
+# Homelab stack. Setup: cp .env.example .env, fill it in, then `docker compose up -d`.
+# Caddy and cloudflared join this file with the public replay pages (see docs/architecture.md).
+name: kiai
+
+services:
+  postgres:
+    image: docker.io/library/postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kiai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: kiai
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kiai", "-d", "kiai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://kiai:${POSTGRES_PASSWORD}@postgres:5432/kiai
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The score library is private and has no login. This publishes it on this machine only;
+    # to use it from your LAN, change it to "<lan-ip>:8080:8080" (or reach it over Tailscale/SSH).
+    # Never route it through Caddy or cloudflared: only the replay pages (a separate port, later)
+    # are public, and the server refuses score requests that arrive through a tunnel anyway.
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - data:/app/data
+
+volumes:
+  pgdata:
+  data:

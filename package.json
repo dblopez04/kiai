@@ -1,0 +1,26 @@
+{
+  "name": "kiai",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "osu! tools for Linux players who run a homelab",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "server": "node --env-file-if-exists=.env packages/server/src/main.ts",
+    "db:up": "sh scripts/dev-db.sh up",
+    "db:down": "sh scripts/dev-db.sh down",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  }
+}
