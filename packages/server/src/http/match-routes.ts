@@ -6,13 +6,17 @@ import { discoveryState, scanStableFrom, setDiscoveryEnabled } from "../matches/
 import { parseMatchRefs, type ParsedRefs } from "../matches/import.ts";
 import {
   MATCH_SOURCES,
+  canonicalMatchFilters,
+  canonicalTournamentFilters,
   findMatch,
   getMatchDetail,
   listMatches,
   listTournamentScores,
+  matchFiltersToParams,
   matchStats,
   parseMatchFilters,
   parseTournamentScoreFilters,
+  tournamentFiltersToParams,
 } from "../matches/query.ts";
 import { clearFailed, enqueueMatches, queueOverview, retryFailed } from "../matches/queue.ts";
 import { setNotTournament, updateMatchSettings } from "../matches/store.ts";
@@ -63,6 +67,10 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
 
   app.get("/matches", async (c) => {
     const filters = parseMatchFilters(new URL(c.req.url).searchParams);
+    // Players go in the link by id, so it keeps working when they change their name.
+    const canonical = await canonicalMatchFilters(sql, filters, deps.osu);
+    const query = matchFiltersToParams(canonical).toString();
+    if (query !== matchFiltersToParams(filters).toString()) return c.redirect(`/matches?${query}`, 302);
     const [page, stats, queue, discovery] = await Promise.all([
       listMatches(sql, player.id, filters),
       matchStats(sql, player.id),
@@ -88,6 +96,8 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
 
   app.get("/matches/scores", async (c) => {
     const filters = parseTournamentScoreFilters(new URL(c.req.url).searchParams);
+    const canonical = await canonicalTournamentFilters(sql, filters, deps.osu);
+    if (canonical.player !== filters.player) return c.redirect(`/matches/scores?${tournamentFiltersToParams(canonical).toString()}`, 302);
     return c.html(tournamentScoresPage(player, filters, await listTournamentScores(sql, player.id, filters)), 200, PRIVATE);
   });
 
@@ -185,11 +195,11 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
 
   // ---------- JSON API ----------
 
-  app.get("/api/matches", async (c) => c.json(await listMatches(sql, player.id, parseMatchFilters(new URL(c.req.url).searchParams)), 200, PRIVATE));
+  app.get("/api/matches", async (c) => c.json(await listMatches(sql, player.id, parseMatchFilters(new URL(c.req.url).searchParams), deps.osu), 200, PRIVATE));
   app.get("/api/matches/stats", async (c) => c.json(await matchStats(sql, player.id), 200, PRIVATE));
   app.get("/api/matches/queue", async (c) => c.json({ queue: await queueOverview(sql), discovery: await discoveryState(sql) }, 200, PRIVATE));
   app.get("/api/matches/scores", async (c) =>
-    c.json(await listTournamentScores(sql, player.id, parseTournamentScoreFilters(new URL(c.req.url).searchParams)), 200, PRIVATE),
+    c.json(await listTournamentScores(sql, player.id, parseTournamentScoreFilters(new URL(c.req.url).searchParams), deps.osu), 200, PRIVATE),
   );
   app.get("/api/matches/:id{[0-9]+}", async (c) => {
     const id = positiveId(c.req.param("id"));

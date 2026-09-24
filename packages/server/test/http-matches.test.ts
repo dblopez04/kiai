@@ -46,9 +46,16 @@ beforeEach(async () => {
 
 describe("match pages", () => {
   it("lists matches with the player's result, match cost, teammates and opponents", async () => {
-    const response = await request("/matches?vs=RivalOne");
+    // Names become ids in the link, so it survives name changes; the box still shows the name.
+    const redirect = await request("/matches?vs=RivalOne");
+    expect(redirect.status).toBe(302);
+    expect(redirect.headers.get("location")).toBe("/matches?vs=3003");
+    const response = await request("/matches?vs=3003");
     expect(response.status).toBe(200);
     const body = await response.text();
+    expect(body).toContain('name="vs" value="RivalOne"');
+    expect(body).toContain('href="/matches?with=2002"');
+    expect(body).toContain('href="/matches?vs=3003"');
     expect(body).toContain("TST 2026: (Red Rockets) vs (Blue Birds)");
     expect(body).toContain(`href="/matches/${matchId}"`);
     expect(body).toContain("2.75");
@@ -111,6 +118,10 @@ describe("match pages", () => {
     expect(await page.text()).toContain("RivalOne");
     const api = (await (await request("/api/matches/scores?mods=HD")).json()) as { pagination: { total_count: number } };
     expect(api.pagination.total_count).toBe(1);
+    const byName = await request("/matches/scores?player=rivalone&sort=pp");
+    expect(byName.status).toBe(302);
+    expect(byName.headers.get("location")).toBe("/matches/scores?sort=pp&player=3003");
+    expect(await (await request("/matches/scores?sort=pp&player=3003")).text()).toContain('name="player" value="RivalOne"');
   });
 
   it("pauses discovery and sets where stable discovery scans from", async () => {

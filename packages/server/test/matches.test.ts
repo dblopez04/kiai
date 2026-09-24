@@ -4,12 +4,14 @@ import { crawlLazer, crawlStable, encodeCursor, scanStableFrom } from "../src/ma
 import { parseMatchRefs } from "../src/matches/import.ts";
 import { isCandidateName, matchmakingBot, parseMatchName } from "../src/matches/normalize.ts";
 import {
+  canonicalMatchFilters,
   getMatchDetail,
   listMatches,
   listTournamentScores,
   matchStats,
   parseMatchFilters,
   parseTournamentScoreFilters,
+  resolveUsers,
 } from "../src/matches/query.ts";
 import { enqueueMatches, queueOverview } from "../src/matches/queue.ts";
 import { fetchMatch, ingestMatch, setNotTournament, updateMatchSettings } from "../src/matches/store.ts";
@@ -244,6 +246,35 @@ describe("searching matches", () => {
     const page = await listMatches(db.sql, USER_ID, parseMatchFilters(q({ with: "nobody" })));
     expect(page.unknown_players).toEqual(["nobody"]);
     expect(page.matches).toEqual([]);
+  });
+
+  it("finds players by id and by any name they had, after a name change", async () => {
+    await db.sql`update osu_users set username = 'NewMate' where id = ${TEAMMATE}`;
+    expect(await names({ with: String(TEAMMATE) })).toEqual([1]);
+    expect(await names({ with: "newmate" })).toEqual([1]);
+    expect(await names({ with: "Mate" })).toEqual([1]);
+    const page = await listMatches(db.sql, USER_ID, parseMatchFilters(q({ with: "mate" })));
+    expect(page.player_names).toEqual({ mate: "NewMate" });
+
+    // Someone else taking the old name gets it for their current name; the id still finds the first.
+    await db.sql`update osu_users set username = 'Mate' where id = ${OPPONENT_A}`;
+    expect((await resolveUsers(db.sql, ["Mate", String(TEAMMATE)])).ids).toEqual(new Map([["Mate", OPPONENT_A], [String(TEAMMATE), TEAMMATE]]));
+  });
+
+  it("looks names it hasn't seen up on osu!, which follows renames", async () => {
+    osu.users.set(TEAMMATE, { id: TEAMMATE, username: "Mate", previous_usernames: ["FirstMate"] });
+    osu.users.set(9999, { id: 9999, username: "Stranger" });
+    const found = await resolveUsers(db.sql, ["FirstMate", "Stranger", "nobody"], osu);
+    expect(found.ids).toEqual(new Map([["FirstMate", TEAMMATE]]));
+    expect(found.unknown).toEqual(["Stranger", "nobody"]);
+    // Remembered, so the next search doesn't need osu!.
+    expect((await resolveUsers(db.sql, ["firstmate"])).ids.get("firstmate")).toBe(TEAMMATE);
+  });
+
+  it("rewrites names in the player filters to ids", async () => {
+    const f = await canonicalMatchFilters(db.sql, parseMatchFilters(q({ with: "Mate", vs: `rivalone,${OPPONENT_A},nobody` })), null);
+    expect(f.with).toEqual([String(TEAMMATE)]);
+    expect(f.vs).toEqual([String(OPPONENT_A), "nobody"]);
   });
 
   it("filters by result, name, played and match cost, and sorts by match cost", async () => {

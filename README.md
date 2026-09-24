@@ -164,7 +164,10 @@ match has every map played and every player's score.
 - **Searching matches:** by name, teammates (**With**: players on your side), opponents
   (**Against**), result, source, match cost, maps played and date. Sort by date, match cost,
   maps, average score, accuracy or name. In a 1v1 the other player is your opponent. In a
-  qualifier or free-for-all lobby, everyone else counts as an opponent.
+  qualifier or free-for-all lobby, everyone else counts as an opponent. Players are matched by
+  osu! user id: type an id, a current name or any name they used to have (kiai remembers every
+  name it has seen, and asks osu! about names it hasn't), and the link switches to ids so it keeps
+  working after a name change.
 - **Not a tournament:** a casual lobby with a tournament-style name (`ABC: (you) vs (friend)`)
   counts as a tournament until you press **Not a tournament** on its match page. It then shows
   as plain stable multiplayer: the tournament Type box no longer covers it, and it

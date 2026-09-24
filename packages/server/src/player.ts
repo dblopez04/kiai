@@ -29,7 +29,18 @@ export async function saveProfile(sql: Sql, user: ApiUser): Promise<Player> {
       pp = excluded.pp, global_rank = excluded.global_rank, play_count = excluded.play_count,
       play_time = excluded.play_time, updated_at = now()
     returning ${sql.unsafe(COLUMNS)}`;
+  await savePastNames(sql, user);
   return row!;
+}
+
+/** Keep a user's earlier names (the current one is recorded by a trigger on osu_users). */
+export async function savePastNames(sql: Sql, user: Pick<ApiUser, "id" | "previous_usernames">): Promise<void> {
+  const names = [...new Set(user.previous_usernames ?? [])].filter(Boolean);
+  if (names.length === 0) return;
+  await sql`
+    insert into osu_user_names (user_id, username)
+    select ${user.id}, name from unnest(${names}::text[]) as name
+    on conflict (user_id, username) do nothing`;
 }
 
 /**

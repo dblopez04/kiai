@@ -3,6 +3,8 @@
 
 import type { PendingQuery, Row } from "postgres";
 import type { Sql } from "../db/index.ts";
+import type { OsuClient } from "../osu/api.ts";
+import { savePastNames } from "../player.ts";
 import { normalizeMods, type ScoreMod } from "../scores/mods.ts";
 import {
   filtersToParams,
@@ -42,9 +44,9 @@ export interface MatchFilters {
   pageSize: number;
   /** Kinds left out; other lobbies are always shown. */
   hide: (typeof MATCH_KINDS)[number][];
-  /** Usernames or ids that played on the player's side. */
+  /** User ids (or names, until resolved) that played on the player's side. */
   with: string[];
-  /** Usernames or ids that played against the player. */
+  /** User ids (or names, until resolved) that played against the player. */
   vs: string[];
   result: "won" | "lost" | null;
   /** Only matches the player has scores in. */
@@ -146,19 +148,69 @@ export function matchFiltersToParams(filters: MatchFilters, overrides: Partial<M
   return params;
 }
 
-/** Usernames (any case) or ids to user ids. Names nobody in the database has are returned apart. */
-export async function resolveUsers(sql: Sql, names: readonly string[]): Promise<{ ids: Map<string, number>; unknown: string[] }> {
+export interface ResolvedUsers {
+  /** Input (id or name) to user id. */
+  ids: Map<string, number>;
+  /** User id to their latest known name. */
+  usernames: Map<number, string>;
+  /** Inputs no saved player has. */
+  unknown: string[];
+}
+
+/**
+ * Ids, current names (any case) or past names to user ids, so searches survive name changes.
+ * An id wins over a name, a current name over a past one. Names still unknown are looked up on
+ * osu! when a client is given (osu! follows renames); only players already in saved matches count.
+ */
+export async function resolveUsers(
+  sql: Sql,
+  inputs: readonly string[],
+  osu: Pick<OsuClient, "getUser"> | null = null,
+): Promise<ResolvedUsers> {
   const ids = new Map<string, number>();
-  if (names.length === 0) return { ids, unknown: [] };
-  const numeric = names.filter((n) => /^\d+$/.test(n)).map(Number);
-  const rows = await sql<{ id: number; username: string }[]>`
-    select id, username from osu_users
-    where lower(username) = any(${names.map((n) => n.toLowerCase())}::text[]) or id = any(${numeric}::bigint[])`;
-  for (const name of names) {
-    const row = rows.find((r) => r.username.toLowerCase() === name.toLowerCase() || String(r.id) === name);
-    if (row) ids.set(name, row.id);
+  const usernames = new Map<number, string>();
+  const wanted = [...new Set(inputs)];
+  if (wanted.length === 0) return { ids, usernames, unknown: [] };
+  const rows = await sql<{ input: string; id: number; username: string }[]>`
+    select distinct on (input) input, u.id, u.username
+    from unnest(${wanted}::text[]) as input
+    join osu_user_names n on lower(n.username) = lower(input) or n.user_id::text = input
+    join osu_users u on u.id = n.user_id
+    order by input, (u.id::text = input) desc, (lower(u.username) = lower(input)) desc, n.last_seen desc`;
+  for (const row of rows) {
+    ids.set(row.input, Number(row.id));
+    usernames.set(Number(row.id), row.username);
   }
-  return { ids, unknown: names.filter((n) => !ids.has(n)) };
+  if (osu) {
+    for (const name of wanted.filter((n) => !ids.has(n) && !/^\d+$/.test(n))) {
+      const user = await osu.getUser(name).catch(() => null);
+      if (!user) continue;
+      const [known] = await sql`update osu_users set username = ${user.username} where id = ${user.id} returning id`;
+      if (!known) continue;
+      await savePastNames(sql, user);
+      ids.set(name, user.id);
+      usernames.set(user.id, user.username);
+    }
+  }
+  return { ids, usernames, unknown: inputs.filter((n) => !ids.has(n)) };
+}
+
+/** The player filter's name replaced by an id, like `canonicalMatchFilters`. */
+export async function canonicalTournamentFilters(
+  sql: Sql,
+  f: TournamentScoreFilters,
+  osu: Pick<OsuClient, "getUser"> | null,
+): Promise<TournamentScoreFilters> {
+  if (f.player === "me" || f.player === "all") return f;
+  const id = (await resolveUsers(sql, [f.player], osu)).ids.get(f.player);
+  return id === undefined ? f : { ...f, player: String(id) };
+}
+
+/** Names in the player filters replaced by ids, so saved links keep working after a rename. */
+export async function canonicalMatchFilters(sql: Sql, f: MatchFilters, osu: Pick<OsuClient, "getUser"> | null): Promise<MatchFilters> {
+  const { ids } = await resolveUsers(sql, [...f.with, ...f.vs], osu);
+  const canon = (list: string[]) => [...new Set(list.map((n) => (ids.has(n) ? String(ids.get(n)) : n)))];
+  return { ...f, with: canon(f.with), vs: canon(f.vs) };
 }
 
 export interface PlayerRef {
@@ -197,6 +249,8 @@ export interface MatchPage {
   pagination: { page: number; page_size: number; total_count: number; total_pages: number };
   /** Names in `with`/`vs` that no saved player has. */
   unknown_players: string[];
+  /** Current names of the players in `with`/`vs`, by the value given. */
+  player_names: Record<string, string>;
 }
 
 const MATCH_ORDER: Record<MatchSortKey, string> = {
@@ -294,8 +348,13 @@ const MATCH_SELECT = (sql: Sql, playerId: number) => sql`
   from matches m
   left join match_players me on me.match_id = m.id and me.user_id = ${playerId}`;
 
-export async function listMatches(sql: Sql, playerId: number, f: MatchFilters): Promise<MatchPage> {
-  const { ids, unknown } = await resolveUsers(sql, [...f.with, ...f.vs]);
+export async function listMatches(
+  sql: Sql,
+  playerId: number,
+  f: MatchFilters,
+  osu: Pick<OsuClient, "getUser"> | null = null,
+): Promise<MatchPage> {
+  const { ids, usernames, unknown } = await resolveUsers(sql, [...f.with, ...f.vs], osu);
   const where = matchConditions(sql, playerId, f, ids);
   const order = sql.unsafe(`${MATCH_ORDER[f.sort]} ${f.order === "asc" ? "asc" : "desc"} nulls last, m.id desc`);
   const offset = (f.page - 1) * f.pageSize;
@@ -309,6 +368,7 @@ export async function listMatches(sql: Sql, playerId: number, f: MatchFilters): 
     matches: rows.map(toMatchListItem),
     pagination: { page: f.page, page_size: f.pageSize, total_count: total, total_pages: Math.ceil(total / f.pageSize) },
     unknown_players: unknown,
+    player_names: Object.fromEntries([...ids].map(([input, id]) => [input, usernames.get(id)!])),
   };
 }
 
@@ -517,6 +577,8 @@ export interface TournamentScorePage {
   scores: TournamentScoreView[];
   pagination: MatchPage["pagination"];
   unknown_player: string | null;
+  /** Current name of the player in `player`, when it's someone else. */
+  player_name: string | null;
 }
 
 const SCORE_ORDER = (sql: Sql, table: string, f: ScoreFilters) =>
@@ -551,14 +613,21 @@ function toTournamentScore(row: Row): TournamentScoreView {
 }
 
 /** Scores from every saved match, with the score library's filters plus player, match name and hidden kinds. */
-export async function listTournamentScores(sql: Sql, playerId: number, f: TournamentScoreFilters): Promise<TournamentScorePage> {
+export async function listTournamentScores(
+  sql: Sql,
+  playerId: number,
+  f: TournamentScoreFilters,
+  osu: Pick<OsuClient, "getUser"> | null = null,
+): Promise<TournamentScorePage> {
   let userId: number | null = playerId;
   let unknownPlayer: string | null = null;
+  let playerName: string | null = null;
   if (f.player === "all") userId = null;
   else if (f.player !== "me") {
-    const { ids } = await resolveUsers(sql, [f.player]);
+    const { ids, usernames } = await resolveUsers(sql, [f.player], osu);
     userId = ids.get(f.player) ?? -1;
     if (userId === -1) unknownPlayer = f.player;
+    else playerName = usernames.get(userId) ?? null;
   }
   const extra: PendingQuery<Row[]>[] = [sql`true`];
   for (const word of searchWords(f.match)) extra.push(sql`s.match_name ilike ${`%${word}%`}`);
@@ -584,6 +653,7 @@ export async function listTournamentScores(sql: Sql, playerId: number, f: Tourna
     scores: rows.map(toTournamentScore),
     pagination: { page: f.page, page_size: f.pageSize, total_count: total, total_pages: Math.ceil(total / f.pageSize) },
     unknown_player: unknownPlayer,
+    player_name: playerName,
   };
 }
 

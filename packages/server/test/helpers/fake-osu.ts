@@ -105,7 +105,10 @@ export function fakeOsu(): FakeOsu {
     async getUser(user) {
       fake.calls.push(`getUser ${user}`);
       if (typeof user === "number") return fake.users.get(user) ?? null;
-      return [...fake.users.values()].find((u) => u.username.toLowerCase() === user.toLowerCase()) ?? null;
+      // Like osu!, a name someone used to have finds them too.
+      const same = (name: string) => name.toLowerCase() === user.toLowerCase();
+      const users = [...fake.users.values()];
+      return users.find((u) => same(u.username)) ?? users.find((u) => u.previous_usernames?.some(same)) ?? null;
     },
     async getMostPlayed(userId, limit, offset) {
       fake.calls.push(`getMostPlayed ${offset}`);
