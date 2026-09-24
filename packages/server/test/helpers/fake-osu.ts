@@ -1,5 +1,5 @@
-import type { OsuClient } from "../../src/osu/api.ts";
-import type { ApiBeatmap, ApiMostPlayed, ApiScore, ApiUser } from "../../src/osu/types.ts";
+import { OsuApiError, type OsuClient } from "../../src/osu/api.ts";
+import type { ApiBeatmap, ApiMatch, ApiMatchInfo, ApiMostPlayed, ApiRoom, ApiRoomEvents, ApiScore, ApiUser } from "../../src/osu/types.ts";
 import type { Sql } from "../../src/db/index.ts";
 
 export const USER_ID = 1001;
@@ -59,9 +59,26 @@ export interface FakeOsu extends OsuClient {
   scoresOnMap: Map<number, ApiScore[]>;
   liveScores: Map<number, ApiScore>;
   files: Map<number, string>;
+  /** Stable matches with all their events; `getMatch` pages them. */
+  matches: Map<number, ApiMatch>;
+  /** Stable matches that exist but are private. */
+  privateMatches: Set<number>;
+  /** osu!'s public lobby list. */
+  lobbies: ApiMatchInfo[];
+  /** Lazer rooms with all their events. */
+  rooms: Map<number, ApiRoomEvents>;
+  /** Ended ranked play rooms for `listRankedPlayRooms`. */
+  rankedRooms: ApiRoom[];
   calls: string[];
   /** Throw from a method, once, to simulate an outage. */
   failOnce: Partial<Record<keyof OsuClient, (...args: unknown[]) => boolean>>;
+}
+
+const decodeCursor = (cursor: string | undefined) => (cursor ? JSON.parse(Buffer.from(cursor, "base64url").toString()) : null);
+
+function eventPage<T extends { events: { id: number }[] }>(full: T, after: number | undefined): T {
+  const events = after === undefined ? full.events.slice(-101) : full.events.filter((e) => e.id > after).slice(0, 101);
+  return { ...full, events };
 }
 
 export function fakeOsu(): FakeOsu {
@@ -74,6 +91,11 @@ export function fakeOsu(): FakeOsu {
     scoresOnMap: new Map(),
     liveScores: new Map(),
     files: new Map(),
+    matches: new Map(),
+    privateMatches: new Set(),
+    lobbies: [],
+    rooms: new Map(),
+    rankedRooms: [],
     calls: [],
     failOnce: {},
 
@@ -109,6 +131,41 @@ export function fakeOsu(): FakeOsu {
       fake.calls.push(`getBeatmapFile ${beatmapId}`);
       check("getBeatmapFile", beatmapId);
       return fake.files.get(beatmapId) ?? null;
+    },
+    async getMatch(matchId, after) {
+      fake.calls.push(`getMatch ${matchId} ${after ?? ""}`.trim());
+      check("getMatch", matchId);
+      if (fake.privateMatches.has(matchId)) throw new OsuApiError("private", 403);
+      const full = fake.matches.get(matchId);
+      if (!full) return null;
+      const ids = full.events.map((e) => e.id);
+      return { ...eventPage(full, after), first_event_id: Math.min(...ids), latest_event_id: Math.max(...ids) };
+    },
+    async listMatches({ sort, limit, cursorString }) {
+      fake.calls.push(`listMatches ${sort} ${cursorString ? decodeCursor(cursorString).match_id : ""}`.trim());
+      check("listMatches");
+      const from = decodeCursor(cursorString)?.match_id as number | undefined;
+      const sorted = fake.lobbies.toSorted((a, b) => (sort === "id_asc" ? a.id - b.id : b.id - a.id));
+      const after = from === undefined ? sorted : sorted.filter((m) => (sort === "id_asc" ? m.id > from : m.id < from));
+      return { matches: after.slice(0, limit) };
+    },
+    async getRoomEvents(roomId, after) {
+      fake.calls.push(`getRoomEvents ${roomId} ${after ?? ""}`.trim());
+      check("getRoomEvents", roomId);
+      const full = fake.rooms.get(roomId);
+      if (!full) return null;
+      const ids = full.events.map((e) => e.id);
+      return { ...eventPage(full, after), first_event_id: Math.min(...ids), last_event_id: Math.max(...ids) };
+    },
+    async listRankedPlayRooms({ limit, cursorString }) {
+      const cursor = decodeCursor(cursorString) as { ends_at: string; id: number } | null;
+      fake.calls.push(`listRankedPlayRooms ${cursor ? cursor.id : ""}`.trim());
+      const key = (r: ApiRoom) => [Date.parse(r.ends_at ?? ""), r.id] as const;
+      const sorted = fake.rankedRooms.toSorted((a, b) => key(b)[0] - key(a)[0] || b.id - a.id);
+      const older = cursor
+        ? sorted.filter((r) => key(r)[0] < Date.parse(cursor.ends_at) || (key(r)[0] === Date.parse(cursor.ends_at) && r.id < cursor.id))
+        : sorted;
+      return older.slice(0, limit);
     },
   };
 

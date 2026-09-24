@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import postgres from "postgres";
 
 export type Sql = postgres.Sql;
+/** A connection or an open transaction. */
+export type Db = postgres.Sql | postgres.TransactionSql;
 
 const INT8_OID = 20;
 

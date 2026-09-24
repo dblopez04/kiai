@@ -1,5 +1,5 @@
 import { RateLimiter, sleep as defaultSleep, type Sleep } from "./rate-limit.ts";
-import type { ApiBeatmap, ApiMostPlayed, ApiScore, ApiUser } from "./types.ts";
+import type { ApiBeatmap, ApiMatch, ApiMatchList, ApiMostPlayed, ApiRoom, ApiRoomEvents, ApiScore, ApiUser } from "./types.ts";
 
 const SERVER = "https://osu.ppy.sh";
 const API_VERSION = "20250530";
@@ -34,6 +34,17 @@ export interface OsuClient {
   getScore(scoreId: number): Promise<ApiScore | null>;
   /** The .osu file. Null if osu! doesn't have it. */
   getBeatmapFile(beatmapId: number): Promise<string | null>;
+  /**
+   * Up to 101 events of a stable match: the newest ones, or those after event `after`, oldest
+   * first. Null if there is no such match; private matches throw with status 403.
+   */
+  getMatch(matchId: number, after?: number): Promise<ApiMatch | null>;
+  /** osu!'s list of public stable lobbies (all of them, not only tournaments), by id. */
+  listMatches(options: { sort: "id_asc" | "id_desc"; limit: number; cursorString?: string }): Promise<ApiMatchList>;
+  /** Up to 101 events of a lazer realtime room (ranked play), like {@link getMatch}. */
+  getRoomEvents(roomId: number, after?: number): Promise<ApiRoomEvents | null>;
+  /** Ended ranked play rooms, most recently ended first. */
+  listRankedPlayRooms(options: { limit: number; cursorString?: string }): Promise<ApiRoom[]>;
 }
 
 export interface OsuApiOptions {
@@ -140,6 +151,26 @@ export class OsuApi implements OsuClient {
       throw new OsuApiError(`Beatmap ${beatmapId} download was not a beatmap file.`, response.status);
     }
     return text;
+  }
+
+  async getMatch(matchId: number, after?: number): Promise<ApiMatch | null> {
+    return this.#getJson<ApiMatch>(`/api/v2/matches/${matchId}`, { after, limit: 101 }, { nullOn404: true });
+  }
+
+  async listMatches(options: { sort: "id_asc" | "id_desc"; limit: number; cursorString?: string }): Promise<ApiMatchList> {
+    const query = { sort: options.sort, limit: options.limit, cursor_string: options.cursorString };
+    return (await this.#getJson<ApiMatchList>("/api/v2/matches", query)) ?? { matches: [] };
+  }
+
+  async getRoomEvents(roomId: number, after?: number): Promise<ApiRoomEvents | null> {
+    return this.#getJson<ApiRoomEvents>(`/api/v2/rooms/${roomId}/events`, { after, limit: 101 }, { nullOn404: true });
+  }
+
+  async listRankedPlayRooms(options: { limit: number; cursorString?: string }): Promise<ApiRoom[]> {
+    const query = { type_group: "ranked-play", mode: "ended", sort: "ended", limit: options.limit, cursor_string: options.cursorString };
+    // Older API versions return a bare array; newer ones wrap it with a cursor.
+    const body = await this.#getJson<ApiRoom[] | { rooms?: ApiRoom[] }>("/api/v2/rooms", query);
+    return Array.isArray(body) ? body : (body?.rooms ?? []);
   }
 
   #url(path: string, query: Query = {}): URL {
