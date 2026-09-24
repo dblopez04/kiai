@@ -146,11 +146,12 @@ match has every map played and every player's score.
   `server matches import history.txt`). Any text with mp links or
   `osu.ppy.sh/multiplayer/rooms/<id>` links works too, and so does **Add** with a single link or
   id. Elitebotix hides recent qualifier links; kiai counts and skips them.
-- **Discovery:** osu! has no "matches this player played" endpoint. Instead, kiai walks osu!'s
-  list of every public stable lobby (`GET /matches`), staying two hours behind the newest one.
-  It fetches the lobbies with tournament-style names (`ACR: (A) vs (B)`, qualifier lobbies) or
-  your name, and keeps those you played in. Ended ranked play rooms list their players, so
-  yours are queued directly. Stable gets three crawl turns out of four. The stable crawl starts
+- **Discovery:** osu! has no "matches this player played" endpoint for stable. Instead, kiai
+  walks osu!'s list of every public stable lobby (`GET /matches`), staying two hours behind the
+  newest one. It fetches the lobbies with tournament-style names (`ACR: (A) vs (B)`, qualifier
+  lobbies) or your name, and keeps those you played in. Ranked play rooms come from your
+  profile's ranked play history (`osu.ppy.sh/users/<id>/ranked-play`), so all of them are queued
+  directly. Stable gets three crawl turns out of four. The stable crawl starts
   at the newest lobby; **Scan from match id** (or `server matches scan-from <id>`) backfills from
   an older match, for example to catch qualifiers Elitebotix hid. Pause either crawler on the
   page, or set `MATCH_DISCOVERY=false`.

@@ -75,14 +75,14 @@ is private like the score library.
 | `matches/cost.ts` | Bathbot's match cost (`process_match`), per-game winners, sides and score line. Pure |
 | `matches/store.ts` | Fetch every event page (101 per request), save, local PP (rosu-pp, without NF), recompute match costs |
 | `matches/queue.ts` | Fetch queue: requested (0) → refreshing in-progress matches (1) → discovery probes (2); backoff, permanent failures for private/missing matches |
-| `matches/discovery.ts` | Stable crawler over `GET /matches?sort=id_asc` (cursor = base64url JSON `{"match_id"}`), two hours behind, probing tournament-style names; lazer crawler over ended ranked play rooms with a watermark |
+| `matches/discovery.ts` | Stable crawler over `GET /matches?sort=id_asc` (cursor = base64url JSON `{"match_id"}`), two hours behind, probing tournament-style names; lazer crawler over the player's ranked play history (`/users/{id}/ranked-play`, a website route that returns JSON without a token; 50 a page, cursor `{"ends_at", "id"}`) with a watermark |
 | `matches/worker.ts` | Queue first, then crawl (stable 3 turns in 4). Runs next to the sync worker with the same rate limiter |
 | `matches/query.ts` | Match filters relative to the player (with/against/result/match cost), match detail, tournament score search on `match_score_rows` through `scoreConditions` |
 | `http/match-routes.ts`, `http/match-views.ts` | Pages and API |
 
-Things that are not verified against live osu! yet (the tests use fakes): the ranked play room
-listing's cursor (`{"ends_at", "id"}` for `sort=ended`), whether `recent_participants` always
-includes both ranked play players, and ranked play's `details.teams` shape. Ranked play is
+The ranked play history route and its cursor were checked against live osu! (2026-09-24). It
+lists rooms where the player set a score, so a room left before finishing a map is missed. Not
+verified yet (the tests use fakes): ranked play's `details.teams` shape. Ranked play is
 decided by more than map wins, so its score line only counts maps won.
 
 Differences from the proof of concept:
