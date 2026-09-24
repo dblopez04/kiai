@@ -43,6 +43,42 @@ export function mapCell(b: Pick<BeatmapView, "artist" | "title" | "version">, hr
   return html`<td class="clip map" title="${artist} - ${title} [${version}]"><a href="${href}" ${external ? html`target="_blank" rel="noopener noreferrer"` : ""}>${title}</a> <span class="muted">[${version}]</span> <span class="muted small">${artist}</span></td>`;
 }
 
+// ---------- pagination ----------
+
+/**
+ * The pages a pager shows: the first and last, and two either side of the current one. `null`
+ * marks a gap; a gap of exactly one page shows that page instead, since "…" would be no shorter.
+ */
+export function pageNumbers(page: number, totalPages: number): (number | null)[] {
+  const shown = new Set([1, totalPages]);
+  for (let p = page - 2; p <= page + 2; p++) if (p >= 1 && p <= totalPages) shown.add(p);
+  const out: (number | null)[] = [];
+  let last = 0;
+  for (const p of [...shown].sort((a, b) => a - b)) {
+    if (p - last === 2) out.push(last + 1);
+    else if (p - last > 2) out.push(null);
+    out.push(p);
+    last = p;
+  }
+  return out;
+}
+
+export function pager(pagination: { page: number; total_pages: number }, link: (page: number) => string): Html | string {
+  const { page, total_pages } = pagination;
+  if (total_pages <= 1) return "";
+  return html`<nav class="pager" aria-label="Pages">
+    ${page > 1 ? html`<a class="button" href="${link(page - 1)}" rel="prev">‹ Prev</a>` : html`<span class="button disabled">‹ Prev</span>`}
+    ${pageNumbers(page, total_pages).map((p) =>
+      p === null
+        ? html`<span class="gap">…</span>`
+        : p === page
+          ? html`<span class="button current" aria-current="page">${fmt.number(p)}</span>`
+          : html`<a class="button" href="${link(p)}">${fmt.number(p)}</a>`,
+    )}
+    ${page < total_pages ? html`<a class="button" href="${link(page + 1)}" rel="next">Next ›</a>` : html`<span class="button disabled">Next ›</span>`}
+  </nav>`;
+}
+
 // ---------- layout ----------
 
 export function layout(title: string, body: Html, player: Player): Html {
@@ -278,13 +314,7 @@ function scoreTable(f: ScoreFilters, page: ScorePage): Html {
             </tr>`,
           )}</tbody>
         </table></div>`}
-    ${pagination.total_pages > 1
-      ? html`<nav class="pager">
-          ${pagination.page > 1 ? html`<a href="${link(pagination.page - 1)}">← Previous</a>` : html`<span></span>`}
-          <span>Page ${pagination.page} of ${fmt.number(pagination.total_pages)}</span>
-          ${pagination.page < pagination.total_pages ? html`<a href="${link(pagination.page + 1)}">Next →</a>` : html`<span></span>`}
-        </nav>`
-      : ""}
+    ${pager(pagination, link)}
   </section>`;
 }
 
