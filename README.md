@@ -160,7 +160,9 @@ match has every map played and every player's score.
   averaged, plus 0.5. That is multiplied by up to 1.5 for playing every map and by 1.02 for each
   mod combination beyond two (NoFail doesn't count). A tiebreaker adds up to 0.5. Zero scores
   are left out. EZ scores count ×1.8. Each match page can set warmups, maps to skip at the end,
-  and the EZ multiplier; changing them recalculates the match.
+  and the EZ multiplier; changing them recalculates the match. To leave out one map anywhere
+  (a tiebreaker played for fun after the match was decided, say), open **⋯** on that map and
+  press **Leave out of the match**; fetching the match again keeps it out.
 - **Type boxes:** tournament, qualifiers (tournament-style names with qualifiers, quals or
   tryouts in them, which still count towards their tournament), the ROMAI, ETX and o!mm
   matchmaking bots, ranked play, and other. All start ticked; untick one to hide it.

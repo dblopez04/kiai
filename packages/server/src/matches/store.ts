@@ -176,8 +176,8 @@ export async function analyzeSavedMatch(sql: Db, matchId: number): Promise<{ ana
   const [match] = await sql<{ end_time: Date | null; red_name: string | null; warmups: number; skip_last: number; ez_multiplier: number }[]>`
     select end_time, red_name, warmups, skip_last, ez_multiplier from matches where id = ${matchId}`;
   if (!match) return null;
-  const games = await sql<{ id: number; end_time: Date | null; team_type: string | null }[]>`
-    select id, end_time, team_type from match_games where match_id = ${matchId} order by position`;
+  const games = await sql<{ id: number; end_time: Date | null; team_type: string | null; excluded: boolean }[]>`
+    select id, end_time, team_type, excluded from match_games where match_id = ${matchId} order by position`;
   const scores = await sql<{ game_id: number; user_id: number; total_score: number; team: Team; mod_acronyms: string[]; accuracy: number }[]>`
     select game_id, user_id, total_score, team, score_mod_acronyms(mods) as mod_acronyms, accuracy
     from match_scores where match_id = ${matchId} order by game_id, slot nulls last, user_id`;
@@ -194,6 +194,7 @@ export async function analyzeSavedMatch(sql: Db, matchId: number): Promise<{ ana
     id: g.id,
     ended: g.end_time !== null,
     teamType: g.team_type,
+    excluded: g.excluded,
     scores: scores.filter((s) => s.game_id === g.id).map((s) => ({ userId: s.user_id, score: s.total_score, team: s.team, mods: s.mod_acronyms, accuracy: s.accuracy })),
   }));
   const analysis = analyzeMatch(costGames, {
@@ -263,6 +264,16 @@ export interface MatchSettings {
 export async function setNotTournament(sql: Sql, matchId: number, notTournament: boolean): Promise<boolean> {
   const updated = await sql`update matches set not_tournament = ${notTournament} where id = ${matchId} returning id`;
   return updated.length > 0;
+}
+
+/** Leave one map of a match out of its match costs and score line (or count it again). Returns false if the match has no such map. */
+export async function setGameExcluded(sql: Sql, matchId: number, gameId: number, excluded: boolean): Promise<boolean> {
+  return sql.begin(async (tx) => {
+    const updated = await tx`update match_games set excluded = ${excluded} where id = ${gameId} and match_id = ${matchId} returning id`;
+    if (updated.length === 0) return false;
+    await recomputeMatch(tx, matchId);
+    return true;
+  });
 }
 
 export async function updateMatchSettings(sql: Sql, matchId: number, settings: MatchSettings): Promise<boolean> {

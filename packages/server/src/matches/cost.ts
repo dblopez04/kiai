@@ -33,6 +33,8 @@ export interface CostGame {
   /** Games without an end time were aborted early or are still being played. */
   ended: boolean;
   teamType: string | null;
+  /** Left out by hand, like a warmup anywhere in the match. */
+  excluded?: boolean;
   scores: readonly CostScore[];
 }
 
@@ -66,7 +68,7 @@ export interface PlayerCost {
 
 export interface GameResult {
   id: number;
-  /** Counts towards match costs and the score line (not a warmup, skipped or unfinished). */
+  /** Counts towards match costs and the score line (not a warmup, skipped, left out or unfinished). */
   counted: boolean;
   winner: Side | null;
   redScore: number | null;
@@ -112,6 +114,8 @@ export function analyzeMatch(games: readonly CostGame[], options: CostOptions): 
   const ended = games.filter((g) => g.ended);
   let counted = ended.slice(options.warmups);
   if (options.skipLast > 0) counted = counted.slice(0, Math.max(0, counted.length - options.skipLast));
+  // Warmups and skipped maps go by position among the ended games, whether or not any are left out by hand.
+  counted = counted.filter((g) => !g.excluded);
   const countedIds = new Set(counted.map((g) => g.id));
   const scoresByGame = new Map(counted.map((g) => [g.id, countedScores(g, options.ezMultiplier)]));
 

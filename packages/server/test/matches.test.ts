@@ -15,7 +15,7 @@ import {
   resolveUsers,
 } from "../src/matches/query.ts";
 import { enqueueMatches, queueOverview } from "../src/matches/queue.ts";
-import { fetchMatch, ingestMatch, setNotTournament, updateMatchSettings } from "../src/matches/store.ts";
+import { fetchMatch, ingestMatch, setGameExcluded, setNotTournament, updateMatchSettings } from "../src/matches/store.ts";
 import { createMatchStepper, type MatchWorkerDeps } from "../src/matches/worker.ts";
 import { createPpCalculator } from "../src/scores/pp.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
@@ -121,6 +121,39 @@ describe("match cost (Bathbot's formula)", () => {
     // Game 3: 600k (EZ ×1.5) vs 600k: a draw.
     expect(result.games[2]!.winner).toBeNull();
   });
+
+  it("leaves out maps marked by hand, after warmups and skipped maps go by position", () => {
+    const games = [
+      game(1, [[1, 100_000], [2, 900_000]], "head-to-head"),
+      { ...game(2, [[1, 500_000], [2, 400_000]], "head-to-head"), excluded: true },
+      game(3, [[1, 600_000], [2, 400_000]], "head-to-head"),
+      game(4, [[1, 1], [2, 999_999]], "head-to-head"),
+    ];
+    const result = analyzeMatch(games, { ...options, warmups: 1 });
+    expect(result.games.map((g) => g.counted)).toEqual([false, false, true, true]);
+    expect([result.redWins, result.blueWins]).toEqual([1, 1]);
+    expect(result.players.find((p) => p.userId === 1)!.gamesPlayed).toBe(2);
+  });
+
+  it("drops the tiebreaker bonus when a fun tiebreaker is left out", () => {
+    const r = (a: number, b: number): [number, number, "red"][] => [[1, a, "red"], [2, b, "red"]];
+    const b = (a: number, c: number): [number, number, "blue"][] => [[3, a, "blue"], [4, c, "blue"]];
+    const games = [
+      game(1, [...r(600_000, 600_000), ...b(400_000, 400_000)]),
+      game(2, [...r(600_000, 600_000), ...b(400_000, 400_000)]),
+      game(3, [...r(600_000, 600_000), ...b(400_000, 400_000)]),
+      game(4, [...r(400_000, 400_000), ...b(600_000, 600_000)]),
+      game(5, [...r(400_000, 400_000), ...b(600_000, 600_000)]),
+      game(6, [...r(400_000, 400_000), ...b(600_000, 600_000)]),
+      game(7, [...r(600_000, 600_000), ...b(400_000, 400_000)]),
+    ];
+    expect(analyzeMatch(games, options).tiebreaker).toBe(true);
+    const funTiebreaker = games.map((g) => (g.id === 7 ? { ...g, excluded: true } : g));
+    const result = analyzeMatch(funTiebreaker, options);
+    expect(result.tiebreaker).toBe(false);
+    expect([result.redWins, result.blueWins]).toEqual([3, 3]);
+    expect(result.players.every((p) => p.tiebreakerBonus === 0)).toBe(true);
+  });
 });
 
 describe("names and imports", () => {
@@ -200,6 +233,25 @@ describe("saving matches", () => {
     expect(detail.games[0]!.counted).toBe(false);
     expect([detail.red_wins, detail.blue_wins]).toEqual([2, 2]);
     expect(detail.me!.games_played).toBe(4);
+  });
+
+  it("leaves one map out by hand and keeps it out when the match is fetched again", async () => {
+    const match = teamMatch(90006);
+    const id = await save(match);
+    const before = (await getMatchDetail(db.sql, USER_ID, id))!;
+    const last = before.games.at(-1)!;
+    expect(await setGameExcluded(db.sql, id, last.id, true)).toBe(true);
+    const after = (await getMatchDetail(db.sql, USER_ID, id))!;
+    expect(after.games.at(-1)).toMatchObject({ excluded: true, counted: false });
+    expect(after.me!.games_played).toBe(before.me!.games_played - 1);
+    expect(after.red_wins! + after.blue_wins!).toBe(before.red_wins! + before.blue_wins! - 1);
+    await save(match);
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.games.at(-1)!.excluded).toBe(true);
+    expect(await setGameExcluded(db.sql, id, last.id, false)).toBe(true);
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.me!.games_played).toBe(before.me!.games_played);
+    // A map from another match, or no map at all.
+    expect(await setGameExcluded(db.sql, id + 1, last.id, true)).toBe(false);
+    expect(await setGameExcluded(db.sql, id, 999_999, true)).toBe(false);
   });
 
   describe("EZ multiplier", () => {

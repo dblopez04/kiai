@@ -431,6 +431,8 @@ export interface MatchGameView {
   start_time: string | null;
   end_time: string | null;
   counted: boolean;
+  /** Left out by hand. */
+  excluded: boolean;
   winner: Side | null;
   red_score: number | null;
   blue_score: number | null;
@@ -524,6 +526,7 @@ export async function getMatchDetail(sql: Sql, playerId: number, matchId: number
         start_time: iso(g.start_time),
         end_time: iso(g.end_time),
         counted: result?.counted ?? false,
+        excluded: g.excluded,
         winner: result?.winner ?? null,
         red_score: result?.redScore ?? null,
         blue_score: result?.blueScore ?? null,

@@ -303,6 +303,7 @@ function playersTable(m: MatchDetail, playerId: number): Html {
         <label>EZ multiplier <input type="number" name="ez_multiplier" min="0.1" max="10" step="0.01" value="${m.ez_multiplier}" class="num"></label>
         <button class="primary">Recalculate</button>
       </form>
+      <p class="muted small">To leave out one map anywhere in the match, open ⋯ on that map.</p>
     </details>
   </section>`;
 }
@@ -317,22 +318,37 @@ function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
   const b = g.beatmap;
   const status = !g.end_time
     ? html`<span class="chip">in progress or aborted</span>`
-    : !g.counted
-      ? html`<span class="chip">not counted</span>`
-      : g.winner
-        ? html`<span class="chip side-${g.winner}">${g.winner} wins</span>`
-        : "";
+    : g.excluded
+      ? html`<span class="chip">left out</span>`
+      : !g.counted
+        ? html`<span class="chip">not counted</span>`
+        : g.winner
+          ? html`<span class="chip side-${g.winner}">${g.winner} wins</span>`
+          : "";
   const totals =
     g.red_score !== null && g.blue_score !== null && m.format !== "ffa"
       ? mapTotals(g.red_score, g.blue_score)
       : "";
-  return html`<section class="card game" aria-label="Map ${g.position}">
+  // Unfinished maps never count, so there's nothing to leave out.
+  const menu = g.end_time
+    ? html`<details class="menu">
+        <summary aria-label="Map ${g.position} options">⋯</summary>
+        <form method="post" action="/matches/${m.id}/games/${g.id}/excluded">
+          <input type="hidden" name="excluded" value="${g.excluded ? "false" : "true"}">
+          ${g.excluded
+            ? html`<button>Count this map again</button>`
+            : html`<button>Leave out of the match</button><p class="muted small">For a map that shouldn't count, like a tiebreaker played for fun. Match costs and the score line are worked out again without it.</p>`}
+        </form>
+      </details>`
+    : "";
+  return html`<section class="card game${g.excluded ? " excluded" : ""}" id="game-${g.id}" aria-label="Map ${g.position}">
     <div class="gamehead">
       ${b ? html`<img src="${b.list_url}" alt="" loading="lazy" width="80" height="60">` : ""}
       <div class="grow">
         <div><span class="muted">#${g.position}</span> ${b ? html`<a href="${b.url}" target="_blank" rel="noopener noreferrer">${beatmapTitle(b, g.beatmap_id)}</a> <span class="muted">[${b.version ?? "?"}]</span>` : beatmapTitle(null, g.beatmap_id)}</div>
         <div class="row wrap small">${b ? fmt.stars(b.difficulty_rating) : ""} ${g.mods.length ? modChips(g.mods.map((acronym) => ({ acronym }))) : ""} <span class="muted">${g.scoring_type ?? ""} ${g.team_type ?? ""}</span> ${status} ${totals}</div>
       </div>
+      ${menu}
     </div>
     ${g.scores.length
       ? html`<div class="tablewrap"><table class="scores compact">

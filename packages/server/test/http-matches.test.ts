@@ -85,6 +85,26 @@ describe("match pages", () => {
     expect(detail.me.games_played).toBe(4);
   });
 
+  it("leaves one map out from its menu and counts it again", async () => {
+    type Detail = { me: { games_played: number }; games: { id: number; excluded: boolean; counted: boolean }[] };
+    const detail = async () => (await (await request(`/api/matches/${matchId}`)).json()) as Detail;
+    const before = await detail();
+    const last = before.games.at(-1)!;
+    expect(await (await request(`/matches/${matchId}`)).text()).toContain(`action="/matches/${matchId}/games/${last.id}/excluded"`);
+    const response = await post(`/matches/${matchId}/games/${last.id}/excluded`, { excluded: "true" });
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(`/matches/${matchId}#game-${last.id}`);
+    const after = await detail();
+    expect(after.games.at(-1)).toMatchObject({ excluded: true, counted: false });
+    expect(after.me.games_played).toBe(before.me.games_played - 1);
+    const body = await (await request(`/matches/${matchId}`)).text();
+    expect(body).toContain("left out</span>");
+    expect(body).toContain("Count this map again</button>");
+    await post(`/matches/${matchId}/games/${last.id}/excluded`, { excluded: "false" });
+    expect((await detail()).me.games_played).toBe(before.me.games_played);
+    expect((await post(`/matches/999999/games/${last.id}/excluded`, { excluded: "true" })).status).toBe(404);
+  });
+
   it("marks a match as not a tournament and back", async () => {
     expect(await (await request(`/matches/${matchId}`)).text()).toContain("Not a tournament</button>");
     const response = await post(`/matches/${matchId}/tournament`, { not_tournament: "true" });
