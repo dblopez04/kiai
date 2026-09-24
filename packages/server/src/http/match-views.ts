@@ -29,9 +29,12 @@ type Html = ReturnType<typeof html>;
 const SOURCE_LABEL: Record<MatchSource, string> = { stable: "stable", lazer: "ranked play" };
 export const KIND_LABEL: Record<MatchKind, string> = { tournament: "tournament", qualifiers: "qualifiers", romai: "ROMAI", etx: "ETX", omm: "o!mm", ranked: "ranked play", other: "other" };
 
-/** Every type is ticked unless hidden; the `show=-` marker lets unticked boxes count (see `hiddenKinds`). */
+/**
+ * Every type is ticked unless hidden; the `show=-` marker lets unticked boxes count (see `hiddenKinds`).
+ * The all/none buttons need app.js, which shows them.
+ */
 export function kindFieldset(hidden: readonly MatchKind[]): Html {
-  return html`<fieldset class="inline"><legend>Type</legend>
+  return html`<fieldset class="inline" data-checkall><legend>Type <span class="small" data-checkall-buttons hidden>(<button type="button" class="link" data-checkall="true">all</button> · <button type="button" class="link" data-checkall="false">none</button>)</span></legend>
     <input type="hidden" name="show" value="-">
     ${MATCH_KINDS.map((kind) => html`<label class="check"><input type="checkbox" name="show" value="${kind}" ${checked(!hidden.includes(kind))}> ${KIND_LABEL[kind]}</label>`)}
   </fieldset>`;
@@ -242,8 +245,8 @@ export function matchesPage(d: MatchesPageData): Html {
   return layout(
     "Matches",
     html`${d.notice ? html`<p class="notice" role="status">${d.notice}</p>` : ""}
-      ${statsPanel(d.stats)}
       <div class="grid2">${importPanel(d.queue)}${discoveryPanel(d.discovery, d.discoveryEnabled, d.osuConfigured)}</div>
+      ${statsPanel(d.stats)}
       ${matchFilterForm(d.filters, d.page.player_names)}
       ${matchTable(d.filters, d.page)}`,
     d.player,

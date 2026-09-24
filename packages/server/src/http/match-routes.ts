@@ -75,7 +75,7 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
     if (query !== matchFiltersToParams(filters).toString()) return c.redirect(`/matches?${query}`, 302);
     const [page, stats, queue, discovery] = await Promise.all([
       listMatches(sql, player.id, filters),
-      matchStats(sql, player.id),
+      matchStats(sql, player.id, filters),
       queueOverview(sql),
       discoveryState(sql),
     ]);
@@ -214,7 +214,7 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
   // ---------- JSON API ----------
 
   app.get("/api/matches", async (c) => c.json(await listMatches(sql, player.id, parseMatchFilters(new URL(c.req.url).searchParams), deps.osu), 200, PRIVATE));
-  app.get("/api/matches/stats", async (c) => c.json(await matchStats(sql, player.id), 200, PRIVATE));
+  app.get("/api/matches/stats", async (c) => c.json(await matchStats(sql, player.id, parseMatchFilters(new URL(c.req.url).searchParams), deps.osu), 200, PRIVATE));
   app.get("/api/matches/insights", async (c) =>
     c.json(await matchInsights(sql, player.id, parseInsightFilters(new URL(c.req.url).searchParams)), 200, PRIVATE),
   );

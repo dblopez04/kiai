@@ -507,6 +507,15 @@ describe("searching matches", () => {
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, played: 2, won: 1, lost: 1, tournaments: 3 });
   });
 
+  it("summarizes only the matches the filters keep", async () => {
+    const stats = (params: Record<string, string>) => matchStats(db.sql, USER_ID, parseMatchFilters(q(params)));
+    expect(await stats({ result: "won" })).toMatchObject({ matches: 1, played: 1, won: 1, lost: 0, tournaments: 1 });
+    expect(await stats({ q: "abc tester" })).toMatchObject({ matches: 1, won: 0, lost: 1 });
+    expect(await stats({ played: "true" })).toMatchObject({ matches: 2, played: 2 });
+    expect((await stats({ result: "lost" })).best_match_cost?.match_cost).toBe((await stats({ q: "abc tester" })).best_match_cost?.match_cost);
+    expect(await stats({ hide: "tournament" })).toMatchObject({ matches: 0, played: 0, avg_match_cost: null, best_match_cost: null });
+  });
+
   it("hides tournaments, qualifiers, each matchmaking bot, ranked play or other lobbies", async () => {
     const duel = (id: number, name: string) =>
       stableMatch({ id, name, games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 500_000], [OPPONENT_B, 400_000]] }] });
