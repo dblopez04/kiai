@@ -1,4 +1,4 @@
-// The match worker: fetches queued matches, then crawls for new ones. It runs next to the score
+// The match worker: fetches queued matches and crawls for new ones. It runs next to the score
 // sync worker and shares its osu! rate limiter, so both make progress during long imports.
 
 import type { Sql } from "../db/index.ts";
@@ -15,7 +15,7 @@ export interface MatchWorkerDeps {
   pp: PpCalculator | null;
   playerId: number;
   playerName: string;
-  /** Crawl for new matches when the queue is empty. */
+  /** Crawl for new matches: whenever the queue is empty, and every few steps while it has work. */
   discovery: boolean;
   log: (message: string) => void;
   now?: () => number;
@@ -66,32 +66,46 @@ async function processQueued(deps: MatchWorkerDeps, row: QueueRow): Promise<void
   await finishQueued(sql, row);
 }
 
+/** While the queue has work, one step in this many is a crawl, so a long import can't starve the crawlers. */
+const CRAWL_EVERY = 5;
+
 /** Process one queued match or one crawl page. Returns false when there was nothing to do. */
 export function createMatchStepper(deps: MatchWorkerDeps): () => Promise<boolean> {
   let crawls = 0;
+  let steps = 0;
   const idleUntil: Record<"stable" | "lazer", number> = { stable: 0, lazer: 0 };
   const IDLE_MS = { stable: 5 * 60_000, lazer: 15 * 60_000 };
 
   const crawl = async (source: "stable" | "lazer"): Promise<CrawlResult> => {
     const discoveryDeps = { sql: deps.sql, osu: deps.osu, playerId: deps.playerId, playerName: deps.playerName, ...(deps.now ? { now: deps.now } : {}) };
-    const result = await (source === "stable" ? crawlStable(discoveryDeps) : crawlLazer(discoveryDeps));
+    let result: CrawlResult;
+    try {
+      result = await (source === "stable" ? crawlStable(discoveryDeps) : crawlLazer(discoveryDeps));
+    } catch (error) {
+      // The crawl saved the error for the matches page; back off instead of stalling the queue.
+      deps.log(`${source} discovery: ${errorMessage(error)}`);
+      result = "idle";
+    }
     if (result !== "worked") idleUntil[source] = (deps.now?.() ?? Date.now()) + IDLE_MS[source];
     return result;
   };
 
   return async () => {
-    const row = await claimQueued(deps.sql);
-    if (row) {
-      await processQueued(deps, row);
-      return true;
-    }
-    if (!deps.discovery) return false;
     const now = deps.now?.() ?? Date.now();
-    const due = (["stable", "lazer"] as const).filter((source) => idleUntil[source] <= now);
-    if (due.length === 0) return false;
+    const due = deps.discovery ? (["stable", "lazer"] as const).filter((source) => idleUntil[source] <= now) : [];
+    const crawlTurn = due.length > 0 && steps++ % CRAWL_EVERY === CRAWL_EVERY - 1;
+    if (!crawlTurn) {
+      const row = await claimQueued(deps.sql);
+      if (row) {
+        await processQueued(deps, row);
+        return true;
+      }
+      if (due.length === 0) return false;
+    }
     // Stable tournaments matter most: it gets three crawl turns out of four.
     const source = due.length === 1 ? due[0]! : crawls++ % 4 === 3 ? "lazer" : "stable";
-    return (await crawl(source)) === "worked";
+    // After a crawl turn the queue may still have work.
+    return (await crawl(source)) === "worked" || crawlTurn;
   };
 }
 

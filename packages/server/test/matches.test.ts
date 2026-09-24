@@ -697,6 +697,37 @@ describe("match worker", () => {
     expect(row).toEqual({ kind: "fetch", priority: 1, later: true });
   });
 
+  it("crawls ranked play history while a long import is queued, clearing an old error", async () => {
+    await db.sql`update match_discovery set last_error = 'osu! /api/v2/rooms returned HTTP 500.' where source = 'lazer'`;
+    for (let id = 1; id <= 30; id++) osu.matches.set(id, teamMatch(id));
+    await enqueueMatches(db.sql, Array.from({ length: 30 }, (_, i) => ({ source: "stable" as const, externalId: i + 1 })), { addedVia: "import" });
+    osu.rankedRooms = [{ id: 7000, ends_at: "2026-09-03T00:00:00Z" }];
+
+    const step = worker();
+    for (let i = 0; i < 20; i++) await step();
+    expect(osu.calls).toContain(`listUserRankedPlayRooms ${USER_ID}`);
+    expect((await db.sql`select count(*)::int as n from match_queue where source = 'stable'`)[0]!.n).toBeGreaterThan(0);
+    const [state] = await db.sql`select scanned, last_error, last_run_at from match_discovery where source = 'lazer'`;
+    expect(state).toMatchObject({ scanned: 1, last_error: null });
+    expect(state!.last_run_at).not.toBeNull();
+  });
+
+  it("keeps fetching queued matches when a crawl fails, and saves the error", async () => {
+    osu.failOnce.listUserRankedPlayRooms = () => true;
+    osu.failOnce.listMatches = () => true;
+    for (let id = 1; id <= 10; id++) osu.matches.set(id, teamMatch(id));
+    await enqueueMatches(db.sql, Array.from({ length: 10 }, (_, i) => ({ source: "stable" as const, externalId: i + 1 })), { addedVia: "import" });
+
+    const step = worker();
+    while (await step()) {}
+    expect((await db.sql`select count(*)::int as n from matches`)[0]!.n).toBe(10);
+    const errors = await db.sql`select source, last_error from match_discovery order by source`;
+    expect(errors).toEqual([
+      { source: "lazer", last_error: "simulated listUserRankedPlayRooms outage" },
+      { source: "stable", last_error: "simulated listMatches outage" },
+    ]);
+  });
+
   it("crawls stable lobbies two hours behind, probing tournament names and keeping the player's", async () => {
     const old = new Date(Date.now() - 5 * 3600_000).toISOString();
     const recent = new Date(Date.now() - 600_000).toISOString();
