@@ -29,9 +29,11 @@ type Html = ReturnType<typeof html>;
 const SOURCE_LABEL: Record<MatchSource, string> = { stable: "stable", lazer: "ranked play" };
 const KIND_LABEL: Record<MatchKind, string> = { tournament: "tournament", romai: "ROMAI", etx: "ETX", omm: "o!mm", ranked: "ranked play", other: "other" };
 
-function kindFieldset(selected: readonly MatchKind[]): Html {
+/** Every type is ticked unless hidden; the `show=-` marker lets unticked boxes count (see `hiddenKinds`). */
+function kindFieldset(hidden: readonly MatchKind[]): Html {
   return html`<fieldset class="inline"><legend>Type</legend>
-    ${MATCH_KINDS.map((kind) => html`<label class="check"><input type="checkbox" name="kind" value="${kind}" ${checked(selected.includes(kind))}> ${KIND_LABEL[kind]}</label>`)}
+    <input type="hidden" name="show" value="-">
+    ${MATCH_KINDS.map((kind) => html`<label class="check"><input type="checkbox" name="show" value="${kind}" ${checked(!hidden.includes(kind))}> ${KIND_LABEL[kind]}</label>`)}
   </fieldset>`;
 }
 const cost = (value: number | null | undefined) => (typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "—");
@@ -182,7 +184,7 @@ function matchFilterForm(f: MatchFilters): Html {
       <label class="grow">Against <input name="vs" value="${f.vs.join(", ")}" placeholder="opponents, comma-separated" class="wide"></label>
     </div>
     <div class="row wrap">
-      ${kindFieldset(f.kind)}
+      ${kindFieldset(f.hide)}
       <label>Result <select name="result"><option value="">any</option><option value="won" ${f.result === "won" ? html`selected` : ""}>won</option><option value="lost" ${f.result === "lost" ? html`selected` : ""}>lost</option></select></label>
       <label class="check"><input type="checkbox" name="played" value="true" ${checked(f.played)}> I played</label>
     </div>
@@ -376,7 +378,7 @@ export function tournamentScoresPage(player: Player, f: TournamentScoreFilters, 
   const extra = html`<div class="row wrap">
     <label>Player <input name="player" value="${f.player === "me" ? "" : f.player}" placeholder="you (or a name, or all)" class="wide"></label>
     <label class="grow">Match <input name="match" value="${f.match}" placeholder="match name words, e.g. OWC 2026" class="wide"></label>
-    ${kindFieldset(f.kind)}
+    ${kindFieldset(f.hide)}
   </div>`;
   const showPlayer = f.player !== "me";
   return layout(

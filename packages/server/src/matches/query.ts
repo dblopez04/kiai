@@ -40,8 +40,8 @@ export interface MatchFilters {
   order: "asc" | "desc";
   page: number;
   pageSize: number;
-  /** Any of these kinds; none means every match. */
-  kind: (typeof MATCH_KINDS)[number][];
+  /** Kinds left out; other lobbies are always shown. */
+  hide: (typeof MATCH_KINDS)[number][];
   /** Usernames or ids that played on the player's side. */
   with: string[];
   /** Usernames or ids that played against the player. */
@@ -63,7 +63,7 @@ export const DEFAULT_MATCH_FILTERS: MatchFilters = {
   order: "desc",
   page: 1,
   pageSize: PAGE_SIZE_DEFAULT,
-  kind: [],
+  hide: [],
   with: [],
   vs: [],
   result: null,
@@ -87,8 +87,16 @@ const positiveInt = (value: string | null, fallback: number) => {
   return parsed !== null && parsed >= 1 ? Math.floor(parsed) : fallback;
 };
 const date = (value: string | null) => (value && !Number.isNaN(Date.parse(value)) ? value : null);
-const kinds = (params: URLSearchParams) =>
-  [...new Set(list(params.getAll("kind").join(",")).filter((k): k is (typeof MATCH_KINDS)[number] => (MATCH_KINDS as readonly string[]).includes(k)))];
+// `hide=romai,etx`, or the Type checkboxes: `show=<kind>` for each one ticked, plus a `show=-` marker so that
+// unticking every box still counts. Everything not shown is hidden.
+const hiddenKinds = (params: URLSearchParams) => {
+  if (params.has("show")) {
+    const shown = new Set(params.getAll("show"));
+    return MATCH_KINDS.filter((kind) => !shown.has(kind));
+  }
+  const hide = new Set(list(params.getAll("hide").join(",")));
+  return MATCH_KINDS.filter((kind) => hide.has(kind));
+};
 
 export function parseMatchFilters(params: URLSearchParams): MatchFilters {
   const sort = params.get("sort");
@@ -99,7 +107,7 @@ export function parseMatchFilters(params: URLSearchParams): MatchFilters {
     order: params.get("order") === "asc" ? "asc" : "desc",
     page: positiveInt(params.get("page"), 1),
     pageSize: Math.min(positiveInt(params.get("page_size"), PAGE_SIZE_DEFAULT), PAGE_SIZE_MAX),
-    kind: kinds(params),
+    hide: hiddenKinds(params),
     with: [...new Set(list(params.get("with")))],
     vs: [...new Set(list(params.get("vs")))],
     result: result === "won" || result === "lost" ? result : null,
@@ -124,7 +132,7 @@ export function matchFiltersToParams(filters: MatchFilters, overrides: Partial<M
   set("order", f.order, DEFAULT_MATCH_FILTERS.order);
   set("page", f.page, 1);
   set("page_size", f.pageSize, PAGE_SIZE_DEFAULT);
-  if (f.kind.length) params.set("kind", f.kind.join(","));
+  if (f.hide.length) params.set("hide", f.hide.join(","));
   if (f.with.length) params.set("with", f.with.join(","));
   if (f.vs.length) params.set("vs", f.vs.join(","));
   set("result", f.result);
@@ -213,7 +221,7 @@ const iso = (value: unknown) => (value instanceof Date ? value.toISOString() : t
 function matchConditions(sql: Sql, playerId: number, f: MatchFilters, users: Map<string, number>): PendingQuery<Row[]> {
   const c: PendingQuery<Row[]>[] = [sql`true`];
   for (const word of searchWords(f.q)) c.push(sql`m.name ilike ${`%${word}%`}`);
-  if (f.kind.length) c.push(sql`${kindOf(sql)} = any(${f.kind}::text[])`);
+  if (f.hide.length) c.push(sql`${kindOf(sql)} <> all(${f.hide}::text[])`);
   if (f.played) c.push(sql`me.user_id is not null`);
   if (f.result) {
     const lead = sql`(case me.side when 'red' then m.red_wins - m.blue_wins when 'blue' then m.blue_wins - m.red_wins end)`;
@@ -454,8 +462,8 @@ export interface TournamentScoreFilters extends ScoreFilters {
   player: string;
   /** Every word must appear in the match name. */
   match: string;
-  /** Scores from matches of any of these kinds; none means every match. */
-  kind: (typeof MATCH_KINDS)[number][];
+  /** Leave out scores from matches of these kinds. */
+  hide: (typeof MATCH_KINDS)[number][];
 }
 
 export function parseTournamentScoreFilters(params: URLSearchParams): TournamentScoreFilters {
@@ -463,7 +471,7 @@ export function parseTournamentScoreFilters(params: URLSearchParams): Tournament
     ...parseScoreFilters(params),
     player: (params.get("player") ?? "").trim() || "me",
     match: (params.get("match") ?? "").trim(),
-    kind: kinds(params),
+    hide: hiddenKinds(params),
   };
 }
 
@@ -472,7 +480,7 @@ export function tournamentFiltersToParams(f: TournamentScoreFilters, overrides: 
   const params = filtersToParams(merged);
   if (merged.player !== "me") params.set("player", merged.player);
   if (merged.match) params.set("match", merged.match);
-  if (merged.kind.length) params.set("kind", merged.kind.join(","));
+  if (merged.hide.length) params.set("hide", merged.hide.join(","));
   return params;
 }
 
@@ -539,7 +547,7 @@ function toTournamentScore(row: Row): TournamentScoreView {
   };
 }
 
-/** Scores from every saved match, with the score library's filters plus player, match name and kind. */
+/** Scores from every saved match, with the score library's filters plus player, match name and hidden kinds. */
 export async function listTournamentScores(sql: Sql, playerId: number, f: TournamentScoreFilters): Promise<TournamentScorePage> {
   let userId: number | null = playerId;
   let unknownPlayer: string | null = null;
@@ -551,7 +559,7 @@ export async function listTournamentScores(sql: Sql, playerId: number, f: Tourna
   }
   const extra: PendingQuery<Row[]>[] = [sql`true`];
   for (const word of searchWords(f.match)) extra.push(sql`s.match_name ilike ${`%${word}%`}`);
-  if (f.kind.length) extra.push(sql`exists (select 1 from matches m where m.id = s.match_id and ${kindOf(sql)} = any(${f.kind}::text[]))`);
+  if (f.hide.length) extra.push(sql`exists (select 1 from matches m where m.id = s.match_id and ${kindOf(sql)} <> all(${f.hide}::text[]))`);
   const where = sql`${scoreConditions(sql, userId, f)} and ${extra.reduce((all, c) => sql`${all} and ${c}`)}`;
   const from = sql`from match_score_rows s left join beatmaps b on b.id = s.beatmap_id left join osu_users u on u.id = s.user_id`;
   const offset = (f.page - 1) * f.pageSize;

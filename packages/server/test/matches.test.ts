@@ -263,7 +263,7 @@ describe("searching matches", () => {
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, played: 2, won: 1, lost: 1, tournaments: 3 });
   });
 
-  it("filters by kind: tournaments, each matchmaking bot and ranked play", async () => {
+  it("hides tournaments, each matchmaking bot or ranked play, but never other lobbies", async () => {
     const duel = (id: number, name: string) =>
       stableMatch({ id, name, games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 500_000], [OPPONENT_B, 400_000]] }] });
     await save(duel(4, "ROMAI: (tester) vs (RivalTwo)"));
@@ -274,20 +274,25 @@ describe("searching matches", () => {
     expect(Object.fromEntries(all.map((m) => [m.external_id, m.kind]))).toEqual({
       1: "tournament", 2: "tournament", 3: "tournament", 4: "romai", 5: "etx", 6: "omm", 7: "other",
     });
-    expect((await names({ kind: "tournament" })).sort()).toEqual([1, 2, 3]);
-    expect(await names({ kind: "romai" })).toEqual([4]);
-    expect((await names({ kind: "etx,omm" })).sort()).toEqual([5, 6]);
-    const both = new URLSearchParams([["kind", "tournament"], ["kind", "romai"]]);
-    expect((await listMatches(db.sql, USER_ID, parseMatchFilters(both))).matches.map((m) => m.external_id).sort()).toEqual([1, 2, 3, 4]);
-    // `other` has no filter, so it is ignored like any unknown kind.
-    expect((await names({ kind: "other" })).length).toBe(7);
-    expect(await names({ kind: "ranked,bogus" })).toEqual([]);
+    expect((await names({ hide: "tournament" })).sort()).toEqual([4, 5, 6, 7]);
+    expect((await names({ hide: "romai" })).sort()).toEqual([1, 2, 3, 5, 6, 7]);
+    expect((await names({ hide: "romai,etx,omm" })).sort()).toEqual([1, 2, 3, 7]);
+    // `other` has no box, so it can't be hidden, like any unknown kind.
+    expect((await names({ hide: "other,bogus" })).length).toBe(7);
+    // The form sends the ticked boxes, and a marker so unticking all of them still counts.
+    const form = (...shown: string[]) => new URLSearchParams([["show", "-"], ...shown.map((kind): [string, string] => ["show", kind])]);
+    const shown = async (...kinds: string[]) =>
+      (await listMatches(db.sql, USER_ID, parseMatchFilters(form(...kinds)))).matches.map((m) => m.external_id).sort();
+    expect(await shown("tournament", "romai", "etx", "omm", "ranked")).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(await shown("tournament", "ranked")).toEqual([1, 2, 3, 7]);
+    expect(await shown()).toEqual([7]);
+    expect(parseMatchFilters(form("tournament", "ranked")).hide).toEqual(["romai", "etx", "omm"]);
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 7, tournaments: 3 });
     const scores = async (params: Record<string, string>) =>
       (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
     expect(await scores({})).toBe(11);
-    expect(await scores({ kind: "tournament" })).toBe(7);
-    expect(await scores({ kind: "romai,etx,omm" })).toBe(3);
+    expect(await scores({ hide: "romai,etx,omm" })).toBe(8);
+    expect(await scores({ hide: "tournament" })).toBe(4);
   });
 
   it("searches tournament scores with the score library's filters", async () => {
