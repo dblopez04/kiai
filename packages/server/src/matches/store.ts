@@ -215,6 +215,12 @@ export async function recomputeMatch(sql: Db, matchId: number): Promise<void> {
     update matches set format = ${analysis.format}, games_count = ${result.gamesEnded},
       red_wins = ${analysis.redWins}, blue_wins = ${analysis.blueWins}
     where id = ${matchId}`;
+  if (analysis.games.length) {
+    await sql`
+      update match_games g set counted = r.counted, winner = r.winner, red_score = r."redScore", blue_score = r."blueScore"
+      from jsonb_to_recordset(${sqlJson(sql, analysis.games)}) as r(id bigint, counted boolean, winner text, "redScore" bigint, "blueScore" bigint)
+      where g.id = r.id`;
+  }
   await sql`delete from match_players where match_id = ${matchId}`;
   if (analysis.players.length) {
     const rows = analysis.players.map((p) => ({
@@ -239,6 +245,12 @@ export async function recomputeMatch(sql: Db, matchId: number): Promise<void> {
 export async function recomputeEzMatches(sql: Db): Promise<void> {
   const rows = await sql<{ match_id: number }[]>`select distinct match_id from match_scores where 'EZ' = any(mod_acronyms) order by match_id`;
   for (const { match_id } of rows) await recomputeMatch(sql, match_id);
+}
+
+/** Recompute every saved match, after a migration added columns `recomputeMatch` fills. */
+export async function recomputeAllMatches(sql: Db): Promise<void> {
+  const rows = await sql<{ id: number }[]>`select id from matches order by id`;
+  for (const { id } of rows) await recomputeMatch(sql, id);
 }
 
 export interface MatchSettings {

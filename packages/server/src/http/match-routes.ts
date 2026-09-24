@@ -4,6 +4,7 @@ import type { Hono } from "hono";
 import { UserError } from "../errors.ts";
 import { discoveryState, scanStableFrom, setDiscoveryEnabled } from "../matches/discovery.ts";
 import { parseMatchRefs, type ParsedRefs } from "../matches/import.ts";
+import { matchInsights, parseInsightFilters } from "../matches/insights.ts";
 import {
   MATCH_SOURCES,
   canonicalMatchFilters,
@@ -21,6 +22,7 @@ import {
 import { clearFailed, enqueueMatches, queueOverview, retryFailed } from "../matches/queue.ts";
 import { setNotTournament, updateMatchSettings } from "../matches/store.ts";
 import type { AppDeps } from "./app.ts";
+import { matchStatsPage } from "./insight-views.ts";
 import { matchesPage, matchPage, tournamentScoresPage } from "./match-views.ts";
 import { messagePage } from "./views.ts";
 
@@ -99,6 +101,11 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
     const canonical = await canonicalTournamentFilters(sql, filters, deps.osu);
     if (canonical.player !== filters.player) return c.redirect(`/matches/scores?${tournamentFiltersToParams(canonical).toString()}`, 302);
     return c.html(tournamentScoresPage(player, filters, await listTournamentScores(sql, player.id, filters)), 200, PRIVATE);
+  });
+
+  app.get("/matches/stats", async (c) => {
+    const filters = parseInsightFilters(new URL(c.req.url).searchParams);
+    return c.html(matchStatsPage(player, filters, await matchInsights(sql, player.id, filters)), 200, PRIVATE);
   });
 
   app.get("/matches/:id{[0-9]+}", async (c) => {
@@ -197,6 +204,9 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
 
   app.get("/api/matches", async (c) => c.json(await listMatches(sql, player.id, parseMatchFilters(new URL(c.req.url).searchParams), deps.osu), 200, PRIVATE));
   app.get("/api/matches/stats", async (c) => c.json(await matchStats(sql, player.id), 200, PRIVATE));
+  app.get("/api/matches/insights", async (c) =>
+    c.json(await matchInsights(sql, player.id, parseInsightFilters(new URL(c.req.url).searchParams)), 200, PRIVATE),
+  );
   app.get("/api/matches/queue", async (c) => c.json({ queue: await queueOverview(sql), discovery: await discoveryState(sql) }, 200, PRIVATE));
   app.get("/api/matches/scores", async (c) =>
     c.json(await listTournamentScores(sql, player.id, parseTournamentScoreFilters(new URL(c.req.url).searchParams), deps.osu), 200, PRIVATE),

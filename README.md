@@ -178,6 +178,17 @@ match has every map played and every player's score.
   name and source. NoFail is ignored in mod filters, since tournaments force it, so NM means
   no other mods. osu! gives stable multiplayer scores no PP, so it's calculated locally with
   rosu-pp, without NoFail (marked `*`). Ranked play scores keep osu!'s PP when osu! has it.
+- **Match stats** (`/matches/stats`) digs into the matches you played: your record,
+  tiebreakers (matches decided by one map after at least five), MVPs (nobody had a higher
+  match cost), maps won, streaks, and records like peak match cost, best match cost in a loss,
+  greatest comeback, biggest choke, closest map won and lost, and your biggest pop-off (score
+  over the lobby's average). Teammates and opponents are listed by how often you've played
+  with or against them, with your record and both sides' average match cost, plus the ones
+  you shine with or struggle with, your favorite victims and nemeses (among those met at least
+  **Often** times, 3 by default). Players are counted by osu! user id, so name changes don't
+  split them. There are also the countries you've faced, every tournament and matchmaking bot,
+  a mod pool report card, your most played maps, and matches per month. The Type boxes, a
+  match name and dates narrow it all down.
 - Matches still in progress are fetched again every 10 minutes for up to a day. Private or
   missing matches are listed as failed, with **Retry** and **Forget** buttons.
 
@@ -331,6 +342,7 @@ Same privacy rules as the pages: private hostnames only. Uploads also need `UPLO
 | `GET /api/matches/:id` | One match: players with match costs, every map and score |
 | `GET /api/matches/scores?…filters` | Tournament scores: the `/api/scores` filters plus `player` (`me`, `all`, a name or id), `match` and `hide` |
 | `GET /api/matches/stats` | Record, match costs and tournament count |
+| `GET /api/matches/insights?…filters` | Everything on the Match stats page. Filters: `hide`, `q`, `date_from`/`date_to`, `min` (meetings needed for the best/worst lists) |
 | `GET /api/matches/queue` | Fetch queue and discovery progress |
 | `POST /api/matches/import` | `{"text": "..."}` queues every match link in the text |
 

@@ -27,10 +27,10 @@ import { checked, filterForm, fmt, layout, mapCell, modChips, numberValue, pager
 type Html = ReturnType<typeof html>;
 
 const SOURCE_LABEL: Record<MatchSource, string> = { stable: "stable", lazer: "ranked play" };
-const KIND_LABEL: Record<MatchKind, string> = { tournament: "tournament", romai: "ROMAI", etx: "ETX", omm: "o!mm", ranked: "ranked play", other: "other" };
+export const KIND_LABEL: Record<MatchKind, string> = { tournament: "tournament", romai: "ROMAI", etx: "ETX", omm: "o!mm", ranked: "ranked play", other: "other" };
 
 /** Every type is ticked unless hidden; the `show=-` marker lets unticked boxes count (see `hiddenKinds`). */
-function kindFieldset(hidden: readonly MatchKind[]): Html {
+export function kindFieldset(hidden: readonly MatchKind[]): Html {
   return html`<fieldset class="inline"><legend>Type</legend>
     <input type="hidden" name="show" value="-">
     ${MATCH_KINDS.map((kind) => html`<label class="check"><input type="checkbox" name="show" value="${kind}" ${checked(!hidden.includes(kind))}> ${KIND_LABEL[kind]}</label>`)}
@@ -89,6 +89,7 @@ function statsPanel(stats: MatchStats): Html {
       ? html`<div class="stat"><span class="label">Best match cost</span><a href="/matches/${stats.best_match_cost.match_id}">${cost(stats.best_match_cost.match_cost)}</a><span class="muted small">${stats.best_match_cost.name}</span></div>`
       : ""}
     <div class="stat"><span class="label">Tournaments</span><strong>${fmt.number(stats.tournaments)}</strong></div>
+    <div class="stat"><span class="label">Teammates, rivals, records</span><a href="/matches/stats">Match stats →</a></div>
   </section>`;
 }
 

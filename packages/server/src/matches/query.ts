@@ -91,7 +91,7 @@ const positiveInt = (value: string | null, fallback: number) => {
 const date = (value: string | null) => (value && !Number.isNaN(Date.parse(value)) ? value : null);
 // `hide=romai,etx`, or the Type checkboxes: `show=<kind>` for each one ticked, plus a `show=-` marker so that
 // unticking every box still counts. Everything not shown is hidden.
-const hiddenKinds = (params: URLSearchParams) => {
+export const hiddenKinds = (params: URLSearchParams) => {
   if (params.has("show")) {
     const shown = new Set(params.getAll("show"));
     return MATCH_KINDS.filter((kind) => !shown.has(kind));
@@ -263,7 +263,7 @@ const MATCH_ORDER: Record<MatchSortKey, string> = {
 };
 
 /** `matchKind` in SQL, for a `matches` row aliased `m`. */
-const kindOf = (sql: Sql) => {
+export const kindOf = (sql: Sql) => {
   const bots = (Object.keys(MATCHMAKING_BOTS) as MatchmakingBot[]).map((bot) => sql`when m.name ~* ${matchmakingPattern(bot)} then ${bot}::text`);
   return sql`(case
     when m.source = 'lazer' then 'ranked'
