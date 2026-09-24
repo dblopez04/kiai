@@ -3,7 +3,7 @@
 
 import { html } from "hono/html";
 import type { DiscoveryState } from "../matches/discovery.ts";
-import type { MatchSource } from "../matches/normalize.ts";
+import { MATCH_KINDS, type MatchKind, type MatchSource } from "../matches/normalize.ts";
 import {
   MATCH_SORT_KEYS,
   matchFiltersToParams,
@@ -27,6 +27,19 @@ import { checked, filterForm, fmt, layout, modChips, numberValue, rankClass, ran
 type Html = ReturnType<typeof html>;
 
 const SOURCE_LABEL: Record<MatchSource, string> = { stable: "stable", lazer: "ranked play" };
+const KIND_LABEL: Record<MatchKind, string> = { tournament: "tournament", matchmaking: "ROMAI / ETX / o!mm", ranked: "ranked play", other: "other lobbies" };
+const KIND_TITLE: Record<MatchKind, string> = {
+  tournament: "Tournament-style names, like ACR: (A) vs (B)",
+  matchmaking: "Matchmaking bot lobbies",
+  ranked: "Lazer ranked play rooms",
+  other: "Any other stable lobby",
+};
+
+function kindFieldset(selected: readonly MatchKind[]): Html {
+  return html`<fieldset class="inline"><legend>Type</legend>
+    ${MATCH_KINDS.map((kind) => html`<label class="check" title="${KIND_TITLE[kind]}"><input type="checkbox" name="kind" value="${kind}" ${checked(selected.includes(kind))}> ${KIND_LABEL[kind]}</label>`)}
+  </fieldset>`;
+}
 const cost = (value: number | null | undefined) => (typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "—");
 const beatmapTitle = (b: BeatmapView | null, beatmapId: number | null) =>
   b ? `${b.artist ?? "Unknown artist"} - ${b.title ?? "Unknown title"}` : beatmapId ? `Beatmap #${beatmapId} (not on osu!)` : "Unknown beatmap";
@@ -175,14 +188,9 @@ function matchFilterForm(f: MatchFilters): Html {
       <label class="grow">Against <input name="vs" value="${f.vs.join(", ")}" placeholder="opponents, comma-separated" class="wide"></label>
     </div>
     <div class="row wrap">
-      <fieldset class="inline"><legend>Source</legend>
-        <label class="check"><input type="checkbox" name="source" value="stable" ${checked(f.source.includes("stable"))}> stable</label>
-        <label class="check"><input type="checkbox" name="source" value="lazer" ${checked(f.source.includes("lazer"))}> ranked play</label>
-      </fieldset>
+      ${kindFieldset(f.kind)}
       <label>Result <select name="result"><option value="">any</option><option value="won" ${f.result === "won" ? html`selected` : ""}>won</option><option value="lost" ${f.result === "lost" ? html`selected` : ""}>lost</option></select></label>
       <label class="check"><input type="checkbox" name="played" value="true" ${checked(f.played)}> I played</label>
-      <label class="check"><input type="checkbox" name="tournament" value="true" ${checked(f.tournament)}> Tournaments only</label>
-      <label class="check" title="ROMAI, ETX and o!mm lobbies"><input type="checkbox" name="hide_matchmaking" value="true" ${checked(f.hideMatchmaking)}> Hide matchmaking</label>
     </div>
     <div class="row wrap">
       <label>Match cost <input type="number" name="min_cost" value="${numberValue(f.minCost)}" placeholder="min" step="0.01" class="num"> – <input type="number" name="max_cost" value="${numberValue(f.maxCost)}" placeholder="max" step="0.01" class="num"></label>
@@ -208,7 +216,7 @@ function matchTable(f: MatchFilters, page: MatchPage): Html {
           <tbody>${page.matches.map(
             (m) => html`<tr>
               <td class="nowrap">${fmt.date(m.start_time)}</td>
-              <td class="map"><a href="/matches/${m.id}">${m.name || `${SOURCE_LABEL[m.source]} #${m.external_id}`}</a>${m.source === "lazer" ? html` <span class="chip">ranked play</span>` : ""}${m.matchmaking ? html` <span class="chip">matchmaking</span>` : ""}</td>
+              <td class="map"><a href="/matches/${m.id}">${m.name || `${SOURCE_LABEL[m.source]} #${m.external_id}`}</a>${m.kind === "ranked" || m.kind === "matchmaking" ? html` <span class="chip">${m.kind === "ranked" ? "ranked play" : "matchmaking"}</span>` : ""}</td>
               <td class="nowrap">${resultChip(m.result)} ${scoreLine(m)}</td>
               <td class="r">${cost(m.me?.match_cost)}</td>
               <td class="r">${m.me ? html`${m.me.games_played}<span class="muted">/${m.games_count}</span>` : m.games_count}</td>
@@ -351,7 +359,7 @@ export function matchPage(m: MatchDetail, player: Player, notice?: string): Html
       </div>
       ${headline(m)}
       <p class="muted">
-        ${m.source === "lazer" ? "Lazer ranked play" : m.matchmaking ? "Matchmaking lobby" : m.acronym ? `Tournament ${m.acronym}` : "Stable multiplayer"} ·
+        ${m.kind === "ranked" ? "Lazer ranked play" : m.kind === "matchmaking" ? "Matchmaking lobby" : m.kind === "tournament" ? `Tournament ${m.acronym}` : "Stable multiplayer"} ·
         ${fmt.dateTime(m.start_time)}${duration !== null ? ` · ${duration} min` : ""}${m.end_time ? "" : " · in progress"} ·
         ${m.games_count} maps · <a href="${m.url}" target="_blank" rel="noopener noreferrer">View on osu! ↗</a>
       </p>
@@ -374,11 +382,7 @@ export function tournamentScoresPage(player: Player, f: TournamentScoreFilters, 
   const extra = html`<div class="row wrap">
     <label>Player <input name="player" value="${f.player === "me" ? "" : f.player}" placeholder="you (or a name, or all)" class="wide"></label>
     <label class="grow">Match <input name="match" value="${f.match}" placeholder="match name words, e.g. OWC 2026" class="wide"></label>
-    <fieldset class="inline"><legend>Source</legend>
-      <label class="check"><input type="checkbox" name="source" value="stable" ${checked(f.source.includes("stable"))}> stable</label>
-      <label class="check"><input type="checkbox" name="source" value="lazer" ${checked(f.source.includes("lazer"))}> ranked play</label>
-    </fieldset>
-    <label class="check" title="ROMAI, ETX and o!mm lobbies"><input type="checkbox" name="hide_matchmaking" value="true" ${checked(f.hideMatchmaking)}> Hide matchmaking</label>
+    ${kindFieldset(f.kind)}
   </div>`;
   const showPlayer = f.player !== "me";
   return layout(

@@ -257,6 +257,16 @@ export function isMatchmakingName(name: string): boolean {
   return MATCHMAKING_NAME.test(name);
 }
 
+/** What a match is, for filtering: a tournament match, a matchmaking bot's lobby, a ranked play room, or anything else. */
+export const MATCH_KINDS = ["tournament", "matchmaking", "ranked", "other"] as const;
+export type MatchKind = (typeof MATCH_KINDS)[number];
+
+export function matchKind(match: { source: MatchSource; name: string; acronym: string | null }): MatchKind {
+  if (match.source === "lazer") return "ranked";
+  if (isMatchmakingName(match.name)) return "matchmaking";
+  return match.acronym !== null ? "tournament" : "other";
+}
+
 /** Lobby names worth fetching during discovery: tournament-style names, or ones naming the player. */
 export function isCandidateName(name: string, playerName: string): boolean {
   if (parseMatchName(name).acronym !== null) return true;
