@@ -369,7 +369,7 @@ export async function getMatchDetail(sql: Sql, playerId: number, matchId: number
     sql`select g.*, to_jsonb(b) as beatmap from match_games g left join beatmaps b on b.id = g.beatmap_id
       where g.match_id = ${matchId} order by g.position`,
     sql`select s.*, u.username from match_scores s left join osu_users u on u.id = s.user_id
-      where s.match_id = ${matchId} order by s.game_id, s.team, s.total_score desc`,
+      where s.match_id = ${matchId} order by s.game_id, s.team = 'blue', s.total_score desc`,
     analyzeSavedMatch(sql, matchId),
   ]);
   const sides = new Map(players.map((p) => [p.user_id, p.side]));

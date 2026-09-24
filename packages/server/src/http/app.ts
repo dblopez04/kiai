@@ -13,6 +13,7 @@ import { scoreCsv } from "../scores/csv.ts";
 import { getScore, listScores, parseScoreFilters, scoreStats } from "../scores/query.ts";
 import { SYNC_MODES, type SyncMode } from "../sync/checkpoint.ts";
 import { enqueueSync, syncOverview } from "../sync/queue.ts";
+import { mountMatchRoutes } from "./match-routes.ts";
 import { checkPrivateRequest } from "./private.ts";
 import { dashboardPage, messagePage, scorePage, syncStatus } from "./views.ts";
 
@@ -21,7 +22,7 @@ export interface AppDeps {
   /** Null when osu! credentials aren't configured: browsing works, imports don't. */
   osu: OsuClient | null;
   player: Player;
-  config: Pick<Config, "RECENT_WINDOW_HOURS" | "PRIVATE_HOSTS">;
+  config: Pick<Config, "RECENT_WINDOW_HOURS" | "PRIVATE_HOSTS"> & Partial<Pick<Config, "MATCH_DISCOVERY">>;
 }
 
 const ASSETS: Record<string, { type: string; body: string }> = {
@@ -70,6 +71,8 @@ export function createApp(deps: AppDeps): Hono {
     if (!deps.osu) throw new UserError("Imports need OSU_CLIENT_ID and OSU_CLIENT_SECRET to be configured.");
     return enqueueSync(sql, { userId: player.id, mode, trigger, recentWindowHours: windowHours ?? deps.config.RECENT_WINDOW_HOURS });
   }
+
+  mountMatchRoutes(app, deps);
 
   // ---------- pages ----------
 
