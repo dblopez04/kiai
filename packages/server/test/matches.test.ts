@@ -323,27 +323,31 @@ describe("match worker", () => {
     expect(state!.cursor).toEqual({ lastId: 9 });
   });
 
-  it("walks ranked play rooms back to the last pass and queues the player's rooms", async () => {
+  it("walks the player's ranked play history back to the last pass and queues every room", async () => {
     const mine = rankedPlayRoom(5001, [{ beatmapId: 21, scores: [[USER_ID, 1], [OPPONENT_A, 2]] }], "2026-09-01T11:00:00Z");
     osu.rooms.set(5001, mine.events);
     osu.rankedRooms = [
       mine.room,
-      ...Array.from({ length: 300 }, (_, i) => ({ id: 6000 + i, ends_at: new Date(Date.parse("2026-09-02T00:00:00Z") + i * 1000).toISOString(), recent_participants: [USERS[2]!] })),
+      ...Array.from({ length: 120 }, (_, i) => ({ id: 6000 + i, ends_at: new Date(Date.parse("2026-09-02T00:00:00Z") + i * 1000).toISOString() })),
     ];
     const deps = { sql: db.sql, osu, playerId: USER_ID, playerName: "tester" };
     expect(await crawlLazer(deps)).toBe("worked");
+    expect(await crawlLazer(deps)).toBe("worked");
     expect(await crawlLazer(deps)).toBe("idle");
-    expect((await db.sql`select source, external_id from match_queue`).map((r) => r.external_id)).toEqual([5001]);
-    const [state] = await db.sql`select cursor, scanned from match_discovery where source = 'lazer'`;
-    expect(state!.scanned).toBe(301);
-    expect(state!.cursor).toEqual({ watermark: { ends_at: osu.rankedRooms[300]!.ends_at, id: 6299 } });
+    expect(osu.calls).toEqual([`listUserRankedPlayRooms ${USER_ID}`, `listUserRankedPlayRooms ${USER_ID} 6070`, `listUserRankedPlayRooms ${USER_ID} 6020`]);
+    const queued = (await db.sql`select external_id from match_queue where source = 'lazer' order by external_id`).map((r) => Number(r.external_id));
+    expect(queued).toEqual([5001, ...Array.from({ length: 120 }, (_, i) => 6000 + i)]);
+    const [state] = await db.sql`select cursor, scanned, found from match_discovery where source = 'lazer'`;
+    expect(state!.scanned).toBe(121);
+    expect(state!.found).toBe(121);
+    expect(state!.cursor).toEqual({ watermark: { ends_at: osu.rankedRooms[120]!.ends_at, id: 6119 } });
 
     // The next pass stops at the watermark.
-    osu.rankedRooms.push({ id: 7000, ends_at: "2026-09-03T00:00:00Z", recent_participants: [USERS[0]!] });
+    osu.rankedRooms.push({ id: 7000, ends_at: "2026-09-03T00:00:00Z" });
     expect(await crawlLazer(deps)).toBe("idle");
-    expect(osu.calls.at(-1)).toBe("listRankedPlayRooms");
+    expect(osu.calls.at(-1)).toBe(`listUserRankedPlayRooms ${USER_ID}`);
     const [next] = await db.sql`select cursor, scanned from match_discovery where source = 'lazer'`;
-    expect(next!.scanned).toBe(302);
+    expect(next!.scanned).toBe(122);
     expect(next!.cursor).toEqual({ watermark: { ends_at: "2026-09-03T00:00:00Z", id: 7000 } });
     expect(encodeCursor({ a: 1 })).toBe(Buffer.from('{"a":1}').toString("base64url"));
   });

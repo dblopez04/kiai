@@ -1,5 +1,5 @@
 import { RateLimiter, sleep as defaultSleep, type Sleep } from "./rate-limit.ts";
-import type { ApiBeatmap, ApiMatch, ApiMatchList, ApiMostPlayed, ApiRoom, ApiRoomEvents, ApiScore, ApiUser } from "./types.ts";
+import type { ApiBeatmap, ApiMatch, ApiMatchList, ApiMostPlayed, ApiRoomEvents, ApiRoomList, ApiScore, ApiUser } from "./types.ts";
 
 const SERVER = "https://osu.ppy.sh";
 const API_VERSION = "20250530";
@@ -45,8 +45,11 @@ export interface OsuClient {
   listMatches(options: { sort: "id_asc" | "id_desc"; limit: number; cursorString?: string }): Promise<ApiMatchList>;
   /** Up to 101 events of a lazer realtime room (ranked play), like {@link getMatch}. */
   getRoomEvents(roomId: number, after?: number): Promise<ApiRoomEvents | null>;
-  /** Ended ranked play rooms, most recently ended first. */
-  listRankedPlayRooms(options: { limit: number; cursorString?: string }): Promise<ApiRoom[]>;
+  /**
+   * The ended ranked play rooms a player set a score in, most recently ended first, up to 50 a
+   * page. Empty if there is no such user.
+   */
+  listUserRankedPlayRooms(userId: number, options: { limit: number; cursorString?: string }): Promise<ApiRoomList>;
 }
 
 export interface OsuApiOptions {
@@ -172,11 +175,13 @@ export class OsuApi implements OsuClient {
     return this.#getJson<ApiRoomEvents>(`/api/v2/rooms/${roomId}/events`, { after, limit: 101 }, { nullOn404: true });
   }
 
-  async listRankedPlayRooms(options: { limit: number; cursorString?: string }): Promise<ApiRoom[]> {
-    const query = { type_group: "ranked-play", mode: "ended", sort: "ended", limit: options.limit, cursor_string: options.cursorString };
-    // Older API versions return a bare array; newer ones wrap it with a cursor.
-    const body = await this.#getJson<ApiRoom[] | { rooms?: ApiRoom[] }>("/api/v2/rooms", query);
-    return Array.isArray(body) ? body : (body?.rooms ?? []);
+  async listUserRankedPlayRooms(userId: number, options: { limit: number; cursorString?: string }): Promise<ApiRoomList> {
+    // The profile's ranked play history tab: a website route, not API v2, that answers JSON
+    // requests without a token. API v2's `GET /rooms?mode=participated` only knows the token's
+    // own user, and a client-credentials token has none.
+    const query = { is_active: 0, limit: options.limit, cursor_string: options.cursorString };
+    const response = await this.#request(this.#url(`/users/${userId}/ranked-play`, query), { auth: false, nullOn404: true });
+    return response ? ((await response.json()) as ApiRoomList) : { rooms: [] };
   }
 
   #url(path: string, query: Query = {}): URL {
