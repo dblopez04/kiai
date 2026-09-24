@@ -15,8 +15,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/dblopez04/kiai/client/internal/launch"
 )
 
 const token = "0123456789abcdef-token"
@@ -155,10 +153,7 @@ func TestRenderNeedsAServer(t *testing.T) {
 func TestRenderUploadsAndWaitsForTheVideo(t *testing.T) {
 	fake := &fakeServer{}
 	h, osr := setupRender(t, fake)
-	devserver := "gatari.pw"
-	if err := launch.WriteSession(h.paths.SessionFile, launch.Session{Preset: "gatari", Devserver: &devserver, LaunchedAt: "2026-09-23T10:00:00.000Z"}); err != nil {
-		t.Fatal(err)
-	}
+	h.setDevserver("gatari.pw")
 	if code := h.runNoSleep("render", osr); code != 0 {
 		t.Fatalf("exit %d: %s", code, h.err.String())
 	}
@@ -192,6 +187,7 @@ func (h *harness) configuredServerURL() string {
 func TestRenderOfficialAndNoWait(t *testing.T) {
 	fake := &fakeServer{}
 	h, osr := setupRender(t, fake)
+	h.setDevserver("gatari.pw")
 	if code := h.runNoSleep("render", osr, "--official", "--no-wait"); code != 0 {
 		t.Fatalf("exit %d: %s", code, h.err.String())
 	}

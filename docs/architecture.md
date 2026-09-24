@@ -2,18 +2,17 @@
 
 ## Pieces
 
-**Client** (`client/`, Go, standard library only): one static binary on the gaming PC,
-later also a systemd user service.
+**Client** (`client/`, Go, standard library only): one static binary on the gaming PC, run
+as a systemd user service. Its job is the replay watcher.
 
-- Presets and `.desktop` entries (done).
-- `kiai render <file.osr>` (done): uploads a replay, waits for the render, and uploads the map
-  from the local Songs folder when the server can't get it.
 - Replay watcher (done): `kiai watch`, installed as a systemd user unit by `kiai watch install`.
   osu! stable writes exported replays (F2) to `<osu path>/Replays/`, and osu-winello records the
   osu! path in `~/.local/share/osuconfig/osupath`. lazer writes exports to
   `~/.local/share/osu/exports`. The watcher polls both every 3 s (a file is uploaded once its size
-  holds still), uploads each new `.osr` with the token, tags it with the server from
-  `session.json`, and follows the render, uploading the map when the server asks for it.
+  holds still), uploads each new `.osr` with the token, tags it with `devserver` from
+  `config.json`, and follows the render, uploading the map when the server asks for it.
+- `kiai render <file.osr>` (done): the same for one replay by hand. It waits for the render.
+- `kiai skin upload` (done): adds a skin for render presets.
 
 **Server** (`packages/server`): docker compose on the homelab.
 
@@ -167,7 +166,8 @@ What the code relies on from danser 0.11's source:
 
 ## Roadmap
 
-1. **Done:** repo scaffold, client presets and `.desktop` entries (ported to Go).
+1. **Done:** repo scaffold and the Go client. (osu-winello launch presets were dropped later as
+   out of scope.)
 2. **Done:** private single-player score library (sync worker, search/filter, local PP, CSV,
    web UI, compose). Match database: Elitebotix import, discovery, Bathbot match costs,
    tournament score search.
