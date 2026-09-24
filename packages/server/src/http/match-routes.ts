@@ -155,7 +155,8 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
     const id = positiveId(c.req.param("id"))!;
     const form = await c.req.parseBody();
     const ok = await updateMatchSettings(sql, id, {
-      warmups: Math.trunc(bounded(form.warmups, 0, 50, 0)),
+      // Left empty: find them from the host.
+      warmups: typeof form.warmups === "string" && form.warmups.trim() !== "" ? Math.trunc(bounded(form.warmups, 0, 50, 0)) : null,
       skipLast: Math.trunc(bounded(form.skip_last, 0, 50, 0)),
       ezMultiplier: bounded(form.ez_multiplier, 0.1, 10, 1.8),
     });

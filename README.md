@@ -160,7 +160,14 @@ match has every map played and every player's score.
   averaged, plus 0.5. That is multiplied by up to 1.5 for playing every map and by 1.02 for each
   mod combination beyond two (NoFail doesn't count). A tiebreaker adds up to 0.5. Zero scores
   are left out. EZ scores count ×1.8. Each match page can set warmups, maps to skip at the end,
-  and the EZ multiplier; changing them recalculates the match. To leave out one map anywhere
+  and the EZ multiplier; changing them recalculates the match.
+- **Warmups** are found from the lobby host unless you set a count. Refs hand the host to a
+  team captain to pick a warmup and take it back for the mappool, so in tournament and qualifier
+  lobbies a map played while one of the match's players held the host is a warmup (two at most).
+  A lobby where a player held the host for every map was made in game rather than by a ref, and
+  finds none. Casual lobbies always have a player as host, so they find none either. A number in
+  the Warmups box skips that many maps from the start instead; empty it to go back. Matches saved
+  before this are fetched again in the background to read their host changes. To leave out one map anywhere
   (a tiebreaker played for fun after the match was decided, say), open **⋯** on that map and
   press **Leave out of the match**; fetching the match again keeps it out.
 - **Type boxes:** tournament, qualifiers (tournament-style names with qualifiers, quals or

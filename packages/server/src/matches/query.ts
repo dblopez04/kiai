@@ -433,6 +433,11 @@ export interface MatchGameView {
   counted: boolean;
   /** Left out by hand. */
   excluded: boolean;
+  /** Left out as a warmup, by count or from the host. */
+  warmup: boolean;
+  /** The player holding the lobby host when the map started. */
+  host_id: number | null;
+  host_name: string | null;
   winner: Side | null;
   red_score: number | null;
   blue_score: number | null;
@@ -441,7 +446,8 @@ export interface MatchGameView {
 
 export interface MatchDetail extends Omit<MatchListItem, "teammates" | "opponents"> {
   room_type: string | null;
-  warmups: number;
+  /** Null: found from the host (see `games[].warmup`). */
+  warmups: number | null;
   skip_last: number;
   ez_multiplier: number;
   fetched_at: string | null;
@@ -470,7 +476,8 @@ export async function getMatchDetail(sql: Sql, playerId: number, matchId: number
     sql<MatchPlayerView[]>`
       select p.*, u.username, u.country_code from match_players p left join osu_users u on u.id = p.user_id
       where p.match_id = ${matchId} order by p.side = 'blue', p.side is null, p.match_cost desc`,
-    sql`select g.*, to_jsonb(b) as beatmap from match_games g left join beatmaps b on b.id = g.beatmap_id
+    sql`select g.*, to_jsonb(b) as beatmap, h.username as host_name from match_games g left join beatmaps b on b.id = g.beatmap_id
+      left join osu_users h on h.id = g.host_id
       where g.match_id = ${matchId} order by g.position`,
     sql`select s.*, u.username from match_scores s left join osu_users u on u.id = s.user_id
       where s.match_id = ${matchId} order by s.game_id, s.team = 'blue', s.total_score desc`,
@@ -527,6 +534,9 @@ export async function getMatchDetail(sql: Sql, playerId: number, matchId: number
         end_time: iso(g.end_time),
         counted: result?.counted ?? false,
         excluded: g.excluded,
+        warmup: result?.warmup ?? false,
+        host_id: g.host_id,
+        host_name: g.host_name,
         winner: result?.winner ?? null,
         red_score: result?.redScore ?? null,
         blue_score: result?.blueScore ?? null,

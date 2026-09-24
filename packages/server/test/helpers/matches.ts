@@ -43,6 +43,8 @@ export interface GameSpec {
   plays: PlayLine[];
   teamType?: string;
   ended?: boolean;
+  /** A host change just before the game: a player, or 0 for `!mp clearhost`. */
+  host?: number;
 }
 
 export function stableGame(spec: GameSpec, start: Date): ApiMatchEvent {
@@ -88,7 +90,10 @@ export function stableMatch(spec: MatchSpec): ApiMatch {
   for (let i = 0; i < (spec.filler ?? 0); i++) {
     events.push({ id: nextEventId++, detail: { type: i % 2 ? "player-left" : "player-joined" }, user_id: 9_000_000 + (i % 7) });
   }
-  spec.games.forEach((game, i) => events.push(stableGame(game, new Date(start.getTime() + (i + 1) * 300_000))));
+  spec.games.forEach((game, i) => {
+    if (game.host !== undefined) events.push({ id: nextEventId++, detail: { type: "host-changed" }, user_id: game.host });
+    events.push(stableGame(game, new Date(start.getTime() + (i + 1) * 300_000)));
+  });
   const ended = spec.ended !== false;
   return {
     match: {

@@ -298,14 +298,22 @@ function playersTable(m: MatchDetail, playerId: number): Html {
     <details>
       <summary>Warmups and settings</summary>
       <form method="post" action="/matches/${m.id}/settings" class="row wrap">
-        <label>Warmups <input type="number" name="warmups" min="0" max="50" value="${m.warmups}" class="num"></label>
+        <label>Warmups <input type="number" name="warmups" min="0" max="50" value="${m.warmups ?? ""}" placeholder="auto" class="num"></label>
         <label>Skip last <input type="number" name="skip_last" min="0" max="50" value="${m.skip_last}" class="num"></label>
         <label>EZ multiplier <input type="number" name="ez_multiplier" min="0.1" max="10" step="0.01" value="${m.ez_multiplier}" class="num"></label>
         <button class="primary">Recalculate</button>
       </form>
-      <p class="muted small">To leave out one map anywhere in the match, open ⋯ on that map.</p>
+      <p class="muted small">${warmupNote(m)} To leave out one map anywhere in the match, open ⋯ on that map.</p>
     </details>
   </section>`;
+}
+
+function warmupNote(m: MatchDetail): string {
+  if (m.warmups !== null) return `The first ${m.warmups === 1 ? "map is a warmup" : `${m.warmups} maps are warmups`}; empty the box to find them from the host.`;
+  if (m.kind !== "tournament" && m.kind !== "qualifiers") return "With the warmup box empty, only tournament lobbies find warmups from the host.";
+  const found = m.games.filter((g) => g.warmup).map((g) => `#${g.position}`);
+  const rule = "maps played while a player held the host, as when a ref hands it to a captain to pick one (two at most)";
+  return found.length ? `Warmups found from the host: ${found.join(", ")} (${rule}).` : `No warmups found from the host (${rule}).`;
 }
 
 function mapTotals(red: number, blue: number): Html {
@@ -320,6 +328,8 @@ function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
     ? html`<span class="chip">in progress or aborted</span>`
     : g.excluded
       ? html`<span class="chip">left out</span>`
+      : g.warmup
+        ? html`<span class="chip" title="${m.warmups === null && g.host_id ? `Played while ${g.host_name ?? g.host_id} held the host` : ""}">warmup</span>`
       : !g.counted
         ? html`<span class="chip">not counted</span>`
         : g.winner

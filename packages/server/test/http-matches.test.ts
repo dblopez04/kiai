@@ -83,6 +83,14 @@ describe("match pages", () => {
     const detail = (await (await request(`/api/matches/${matchId}`)).json()) as { warmups: number; me: { games_played: number } };
     expect(detail.warmups).toBe(1);
     expect(detail.me.games_played).toBe(4);
+    expect(await (await request(`/matches/${matchId}`)).text()).toContain("The first map is a warmup");
+    // An empty box goes back to finding them from the host (this match has no host changes).
+    await post(`/matches/${matchId}/settings`, { warmups: "", skip_last: "0", ez_multiplier: "1" });
+    const auto = (await (await request(`/api/matches/${matchId}`)).json()) as { warmups: number | null; me: { games_played: number } };
+    expect(auto.warmups).toBeNull();
+    expect(auto.me.games_played).toBe(5);
+    expect(await (await request(`/matches/${matchId}`)).text()).toContain("No warmups found from the host");
+    await post(`/matches/${matchId}/settings`, { warmups: "1", skip_last: "0", ez_multiplier: "1" });
   });
 
   it("leaves one map out from its menu and counts it again", async () => {

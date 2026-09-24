@@ -3,7 +3,7 @@ import { migrate } from "../src/db/index.ts";
 import { analyzeMatch, type CostGame } from "../src/matches/cost.ts";
 import { crawlLazer, crawlStable, encodeCursor, scanStableFrom } from "../src/matches/discovery.ts";
 import { parseMatchRefs } from "../src/matches/import.ts";
-import { isCandidateName, matchmakingBot, parseMatchName } from "../src/matches/normalize.ts";
+import { isCandidateName, matchmakingBot, normalizeStableMatch, parseMatchName } from "../src/matches/normalize.ts";
 import {
   canonicalMatchFilters,
   getMatchDetail,
@@ -154,6 +154,57 @@ describe("match cost (Bathbot's formula)", () => {
     expect([result.redWins, result.blueWins]).toEqual([3, 3]);
     expect(result.players.every((p) => p.tiebreakerBonus === 0)).toBe(true);
   });
+
+  describe("warmups from the host", () => {
+    const REF = 99;
+    const hosted = (hosts: (number | null)[]) =>
+      hosts.map((hostId, i) => ({ ...game(i + 1, [[1, 500_000 + i], [2, 400_000]], "head-to-head"), hostId }));
+    const warmups = (games: CostGame[]) =>
+      analyzeMatch(games, { ...options, warmups: "host" }).games.filter((g) => g.warmup).map((g) => g.id);
+
+    it("leaves out maps played while a player held the host, two at most", () => {
+      expect(warmups(hosted([1, 2, null, null]))).toEqual([1, 2]);
+      expect(warmups(hosted([1, 2, 2, null]))).toEqual([1, 2]);
+      // Not only at the start: a host handed out mid-match counts too.
+      expect(warmups(hosted([null, 1, null]))).toEqual([2]);
+      const result = analyzeMatch(hosted([1, null, null]), { ...options, warmups: "host" });
+      expect(result.games.map((g) => g.counted)).toEqual([false, true, true]);
+      expect(result.players.find((p) => p.userId === 1)!.gamesPlayed).toBe(2);
+    });
+
+    it("ignores a host who didn't play, and a lobby a player hosted throughout", () => {
+      expect(warmups(hosted([REF, REF, null]))).toEqual([]);
+      expect(warmups(hosted([1, 1, 1]))).toEqual([]);
+      expect(warmups(hosted([null, null]))).toEqual([]);
+      // Unfinished games aren't warmups, and don't count as games without a player host.
+      const aborted = hosted([1, null]);
+      aborted[1] = { ...aborted[1]!, ended: false };
+      expect(warmups(aborted)).toEqual([]);
+    });
+
+    it("uses a warmup count instead when one is set", () => {
+      expect(analyzeMatch(hosted([1, null, null]), { ...options, warmups: 0 }).games.map((g) => g.warmup)).toEqual([false, false, false]);
+      expect(analyzeMatch(hosted([null, null, 1]), { ...options, warmups: 1 }).games.map((g) => g.warmup)).toEqual([true, false, false]);
+    });
+  });
+});
+
+describe("normalizing stable matches", () => {
+  it("tracks who holds the host when each game starts", () => {
+    const match = stableMatch({
+      id: 1,
+      name: "TST: (A) vs (B)",
+      games: [
+        { beatmapId: 11, plays: [[USER_ID, 1]], host: USER_ID },
+        { beatmapId: 12, plays: [[USER_ID, 1]], host: 0 },
+        { beatmapId: 13, plays: [[USER_ID, 1]], host: TEAMMATE },
+        { beatmapId: 14, plays: [[USER_ID, 1]] },
+      ],
+    });
+    // The host leaving before the last game: nobody holds it.
+    match.events.splice(-1, 0, { id: 1, detail: { type: "player-left" }, user_id: TEAMMATE });
+    expect(normalizeStableMatch([match]).games.map((g) => g.hostId)).toEqual([USER_ID, null, TEAMMATE, null]);
+  });
 });
 
 describe("names and imports", () => {
@@ -235,6 +286,38 @@ describe("saving matches", () => {
     expect(detail.me!.games_played).toBe(4);
   });
 
+  it("finds warmups from the host in tournament lobbies", async () => {
+    // A captain picks the warmup with the host, then the ref clears it for the mappool.
+    const hostWarmup = (id: number, name?: string) => {
+      const match = teamMatch(id, name ? { name } : {});
+      const [first, second] = match.events.filter((e) => e.game);
+      match.events.splice(match.events.indexOf(first!), 0, { id: 1, detail: { type: "host-changed" }, user_id: TEAMMATE });
+      match.events.splice(match.events.indexOf(second!), 0, { id: 2, detail: { type: "host-changed" }, user_id: 0 });
+      return match;
+    };
+    const id = await save(hostWarmup(90007));
+    const detail = (await getMatchDetail(db.sql, USER_ID, id))!;
+    expect(detail.warmups).toBeNull();
+    expect(detail.games.map((g) => g.warmup)).toEqual([true, false, false, false, false]);
+    expect(detail.games[0]).toMatchObject({ counted: false, host_id: TEAMMATE, host_name: "Mate" });
+    expect([detail.red_wins, detail.blue_wins]).toEqual([2, 2]);
+    expect(detail.me!.games_played).toBe(4);
+
+    // A warmup count wins over the host.
+    await updateMatchSettings(db.sql, id, { warmups: 0, skipLast: 0, ezMultiplier: 1.8 });
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.me!.games_played).toBe(5);
+    await updateMatchSettings(db.sql, id, { warmups: null, skipLast: 0, ezMultiplier: 1.8 });
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.me!.games_played).toBe(4);
+
+    // Casual lobbies always have a player as host, so it says nothing there.
+    await setNotTournament(db.sql, id, true);
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.games[0]!.warmup).toBe(false);
+    await setNotTournament(db.sql, id, false);
+    expect((await getMatchDetail(db.sql, USER_ID, id))!.games[0]!.warmup).toBe(true);
+    const casual = await save(hostWarmup(90008, "tester's lobby"));
+    expect((await getMatchDetail(db.sql, USER_ID, casual))!.me!.games_played).toBe(5);
+  });
+
   it("leaves one map out by hand and keeps it out when the match is fetched again", async () => {
     const match = teamMatch(90006);
     const id = await save(match);
@@ -283,6 +366,31 @@ describe("saving matches", () => {
       expect(match!.ez_multiplier).toBe(1.8);
       expect(await myAvgScore(id)).toBe(900_000);
     });
+  });
+
+  it("switches saved matches to finding warmups from the host and fetches tournaments again", async () => {
+    const duel = (id: number, name: string) =>
+      stableMatch({ id, name, games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 500_000], [OPPONENT_B, 400_000]] }] });
+    const tournament = await save(teamMatch(90010));
+    const counted = await save(teamMatch(90011));
+    await updateMatchSettings(db.sql, counted, { warmups: 1, skipLast: 0, ezMultiplier: 1.8 });
+    await save(duel(90012, "ROMAI: (tester) vs (RivalTwo)"));
+    await save(duel(90013, "tester's lobby"));
+    const casual = await save(duel(90014, "ABC: (tester) vs (friend)"));
+    await setNotTournament(db.sql, casual, true);
+    // Back to before the migration: no hosts, every warmup count a number.
+    await db.sql`alter table match_games drop column host_id`;
+    await db.sql`update matches set warmups = 0 where warmups is null`;
+    await db.sql`alter table matches alter column warmups set not null, alter column warmups set default 0`;
+    await db.sql`truncate match_queue`;
+    await db.sql`delete from schema_migrations where name = '012_match_warmup_detection.sql'`;
+
+    expect(await migrate(db.sql)).toEqual(["012_match_warmup_detection.sql"]);
+    const warmups = await db.sql`select external_id, warmups from matches where source = 'stable' order by external_id`;
+    expect(warmups.map((r) => [Number(r.external_id), r.warmups])).toEqual([[90010, null], [90011, 1], [90012, null], [90013, null], [90014, null]]);
+    const queued = await db.sql`select external_id, kind, priority from match_queue order by external_id`;
+    expect(queued.map((r) => [Number(r.external_id), r.kind, r.priority])).toEqual([[90010, "fetch", 2], [90011, "fetch", 2]]);
+    expect((await getMatchDetail(db.sql, USER_ID, tournament))!.me!.games_played).toBe(5);
   });
 
   it("saves lazer ranked play rooms as 1v1s, keeping osu!'s PP", async () => {

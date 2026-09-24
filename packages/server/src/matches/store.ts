@@ -7,7 +7,7 @@ import type { ApiMatch, ApiRoomEvents, ApiUserCompact } from "../osu/types.ts";
 import { PP_CALCULATOR, type PpCalculator } from "../scores/pp.ts";
 import { upsertBeatmaps } from "../scores/store.ts";
 import { analyzeMatch, type CostGame, type MatchAnalysis, type Team } from "./cost.ts";
-import { normalizeRoom, normalizeStableMatch, parseMatchName, type MatchSource, type NormalizedMatch } from "./normalize.ts";
+import { matchKind, normalizeRoom, normalizeStableMatch, parseMatchName, TOURNAMENT_KINDS, type MatchSource, type NormalizedMatch } from "./normalize.ts";
 
 const EVENT_PAGE = 101;
 // Auto-host lobbies can run for days; tournament matches are a page or two.
@@ -123,13 +123,13 @@ export async function ingestMatch(sql: Sql, match: NormalizedMatch, options: Ing
 
     for (const [position, game] of match.games.entries()) {
       const [saved] = await tx<{ id: number }[]>`
-        insert into match_games (match_id, external_id, position, beatmap_id, ruleset_id, scoring_type, team_type, mods, start_time, end_time)
+        insert into match_games (match_id, external_id, position, beatmap_id, ruleset_id, scoring_type, team_type, mods, start_time, end_time, host_id)
         values (${matchId}, ${game.externalId}, ${position + 1}, ${game.beatmapId}, ${game.rulesetId}, ${game.scoringType}, ${game.teamType},
-                ${game.mods}::text[], ${game.startTime}, ${game.endTime})
+                ${game.mods}::text[], ${game.startTime}, ${game.endTime}, ${game.hostId})
         on conflict (match_id, external_id) do update set
           position = excluded.position, beatmap_id = excluded.beatmap_id, ruleset_id = excluded.ruleset_id,
           scoring_type = excluded.scoring_type, team_type = excluded.team_type, mods = excluded.mods,
-          start_time = excluded.start_time, end_time = excluded.end_time
+          start_time = excluded.start_time, end_time = excluded.end_time, host_id = excluded.host_id
         returning id`;
       const gameId = saved!.id;
       const scores = game.scores.map((s) => {
@@ -173,11 +173,21 @@ export async function ingestMatch(sql: Sql, match: NormalizedMatch, options: Ing
 
 /** The match costs, sides, per-game winners and score line of a saved match. */
 export async function analyzeSavedMatch(sql: Db, matchId: number): Promise<{ analysis: MatchAnalysis; gamesEnded: number } | null> {
-  const [match] = await sql<{ end_time: Date | null; red_name: string | null; warmups: number; skip_last: number; ez_multiplier: number }[]>`
-    select end_time, red_name, warmups, skip_last, ez_multiplier from matches where id = ${matchId}`;
+  const [match] = await sql<{
+    source: MatchSource;
+    name: string;
+    acronym: string | null;
+    not_tournament: boolean;
+    end_time: Date | null;
+    red_name: string | null;
+    warmups: number | null;
+    skip_last: number;
+    ez_multiplier: number;
+  }[]>`
+    select source, name, acronym, not_tournament, end_time, red_name, warmups, skip_last, ez_multiplier from matches where id = ${matchId}`;
   if (!match) return null;
-  const games = await sql<{ id: number; end_time: Date | null; team_type: string | null; excluded: boolean }[]>`
-    select id, end_time, team_type, excluded from match_games where match_id = ${matchId} order by position`;
+  const games = await sql<{ id: number; end_time: Date | null; team_type: string | null; excluded: boolean; host_id: number | null }[]>`
+    select id, end_time, team_type, excluded, host_id from match_games where match_id = ${matchId} order by position`;
   const scores = await sql<{ game_id: number; user_id: number; total_score: number; team: Team; mod_acronyms: string[]; accuracy: number }[]>`
     select game_id, user_id, total_score, team, score_mod_acronyms(mods) as mod_acronyms, accuracy
     from match_scores where match_id = ${matchId} order by game_id, slot nulls last, user_id`;
@@ -195,10 +205,14 @@ export async function analyzeSavedMatch(sql: Db, matchId: number): Promise<{ ana
     ended: g.end_time !== null,
     teamType: g.team_type,
     excluded: g.excluded,
+    hostId: g.host_id,
     scores: scores.filter((s) => s.game_id === g.id).map((s) => ({ userId: s.user_id, score: s.total_score, team: s.team, mods: s.mod_acronyms, accuracy: s.accuracy })),
   }));
+  // No warmup count set: find them from the host in tournament lobbies. Casual lobbies always
+  // have a player as host, so there it says nothing.
+  const kind = matchKind({ source: match.source, name: match.name, acronym: match.acronym, notTournament: match.not_tournament });
   const analysis = analyzeMatch(costGames, {
-    warmups: match.warmups,
+    warmups: match.warmups ?? (TOURNAMENT_KINDS.includes(kind) ? "host" : 0),
     skipLast: match.skip_last,
     ezMultiplier: match.ez_multiplier,
     finished: match.end_time !== null,
@@ -255,15 +269,23 @@ export async function recomputeAllMatches(sql: Db): Promise<void> {
 }
 
 export interface MatchSettings {
-  warmups: number;
+  /** Null finds them from the host, in tournament lobbies. */
+  warmups: number | null;
   skipLast: number;
   ezMultiplier: number;
 }
 
-/** Mark a tournament-style lobby as casual (or undo it). Returns false if the match doesn't exist. */
+/**
+ * Mark a tournament-style lobby as casual (or undo it). Returns false if the match doesn't exist.
+ * Recomputes the match, since only tournament lobbies find warmups from the host.
+ */
 export async function setNotTournament(sql: Sql, matchId: number, notTournament: boolean): Promise<boolean> {
-  const updated = await sql`update matches set not_tournament = ${notTournament} where id = ${matchId} returning id`;
-  return updated.length > 0;
+  return sql.begin(async (tx) => {
+    const updated = await tx`update matches set not_tournament = ${notTournament} where id = ${matchId} returning id`;
+    if (updated.length === 0) return false;
+    await recomputeMatch(tx, matchId);
+    return true;
+  });
 }
 
 /** Leave one map of a match out of its match costs and score line (or count it again). Returns false if the match has no such map. */
