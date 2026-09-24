@@ -14,7 +14,7 @@ import {
   type ScoreFilters,
 } from "../scores/query.ts";
 import type { Side } from "./cost.ts";
-import { matchUrl, type MatchSource } from "./normalize.ts";
+import { isMatchmakingName, MATCHMAKING_NAME_PATTERN, matchUrl, type MatchSource } from "./normalize.ts";
 import { analyzeSavedMatch } from "./store.ts";
 
 export const MATCH_SORT_KEYS = ["date", "match_cost", "maps", "avg_score", "accuracy", "name"] as const;
@@ -39,8 +39,10 @@ export interface MatchFilters {
   result: "won" | "lost" | null;
   /** Only matches the player has scores in. */
   played: boolean;
-  /** Only tournament-style names ("ACR: ..."). */
+  /** Only tournament-style names ("ACR: ..."), never matchmaking lobbies. */
   tournament: boolean;
+  /** Leave out matchmaking bot lobbies (ROMAI, ETX, o!mm). */
+  hideMatchmaking: boolean;
   minCost: number | null;
   maxCost: number | null;
   minMaps: number | null;
@@ -61,6 +63,7 @@ export const DEFAULT_MATCH_FILTERS: MatchFilters = {
   result: null,
   played: false,
   tournament: false,
+  hideMatchmaking: false,
   minCost: null,
   maxCost: null,
   minMaps: null,
@@ -97,6 +100,7 @@ export function parseMatchFilters(params: URLSearchParams): MatchFilters {
     result: result === "won" || result === "lost" ? result : null,
     played: params.get("played") === "true",
     tournament: params.get("tournament") === "true",
+    hideMatchmaking: params.get("hide_matchmaking") === "true",
     minCost: number(params.get("min_cost")),
     maxCost: number(params.get("max_cost")),
     minMaps: number(params.get("min_maps")),
@@ -123,6 +127,7 @@ export function matchFiltersToParams(filters: MatchFilters, overrides: Partial<M
   set("result", f.result);
   set("played", f.played);
   set("tournament", f.tournament);
+  set("hide_matchmaking", f.hideMatchmaking);
   set("min_cost", f.minCost);
   set("max_cost", f.maxCost);
   set("min_maps", f.minMaps);
@@ -160,6 +165,8 @@ export interface MatchListItem {
   url: string;
   name: string;
   acronym: string | null;
+  /** A matchmaking bot's lobby (ROMAI, ETX, o!mm) rather than a tournament match. */
+  matchmaking: boolean;
   red_name: string | null;
   blue_name: string | null;
   start_time: string | null;
@@ -198,7 +205,8 @@ function matchConditions(sql: Sql, playerId: number, f: MatchFilters, users: Map
   for (const word of searchWords(f.q)) c.push(sql`m.name ilike ${`%${word}%`}`);
   if (f.source.length) c.push(sql`m.source = any(${f.source}::text[])`);
   if (f.played) c.push(sql`me.user_id is not null`);
-  if (f.tournament) c.push(sql`m.acronym is not null`);
+  if (f.tournament) c.push(sql`m.acronym is not null and m.name !~* ${MATCHMAKING_NAME_PATTERN}`);
+  if (f.hideMatchmaking) c.push(sql`m.name !~* ${MATCHMAKING_NAME_PATTERN}`);
   if (f.result) {
     const lead = sql`(case me.side when 'red' then m.red_wins - m.blue_wins when 'blue' then m.blue_wins - m.red_wins end)`;
     c.push(f.result === "won" ? sql`${lead} > 0` : sql`${lead} < 0`);
@@ -230,6 +238,7 @@ function toMatchListItem(row: Row): MatchListItem {
     url: matchUrl(row.source, row.external_id),
     name: row.name,
     acronym: row.acronym,
+    matchmaking: isMatchmakingName(row.name),
     red_name: row.red_name,
     blue_name: row.blue_name,
     start_time: iso(row.start_time),
@@ -438,6 +447,8 @@ export interface TournamentScoreFilters extends ScoreFilters {
   /** Every word must appear in the match name. */
   match: string;
   source: MatchSource[];
+  /** Leave out scores from matchmaking bot lobbies (ROMAI, ETX, o!mm). */
+  hideMatchmaking: boolean;
 }
 
 export function parseTournamentScoreFilters(params: URLSearchParams): TournamentScoreFilters {
@@ -446,6 +457,7 @@ export function parseTournamentScoreFilters(params: URLSearchParams): Tournament
     player: (params.get("player") ?? "").trim() || "me",
     match: (params.get("match") ?? "").trim(),
     source: sources(params.getAll("source").join(",")),
+    hideMatchmaking: params.get("hide_matchmaking") === "true",
   };
 }
 
@@ -455,6 +467,7 @@ export function tournamentFiltersToParams(f: TournamentScoreFilters, overrides: 
   if (merged.player !== "me") params.set("player", merged.player);
   if (merged.match) params.set("match", merged.match);
   if (merged.source.length) params.set("source", merged.source.join(","));
+  if (merged.hideMatchmaking) params.set("hide_matchmaking", "true");
   return params;
 }
 
@@ -534,6 +547,7 @@ export async function listTournamentScores(sql: Sql, playerId: number, f: Tourna
   const extra: PendingQuery<Row[]>[] = [sql`true`];
   for (const word of searchWords(f.match)) extra.push(sql`s.match_name ilike ${`%${word}%`}`);
   if (f.source.length) extra.push(sql`s.match_source = any(${f.source}::text[])`);
+  if (f.hideMatchmaking) extra.push(sql`s.match_name !~* ${MATCHMAKING_NAME_PATTERN}`);
   const where = sql`${scoreConditions(sql, userId, f)} and ${extra.reduce((all, c) => sql`${all} and ${c}`)}`;
   const from = sql`from match_score_rows s left join beatmaps b on b.id = s.beatmap_id left join osu_users u on u.id = s.user_id`;
   const offset = (f.page - 1) * f.pageSize;
@@ -578,7 +592,7 @@ export async function matchStats(sql: Sql, playerId: number): Promise<MatchStats
         count(*) filter (where (case me.side when 'red' then m.red_wins - m.blue_wins when 'blue' then m.blue_wins - m.red_wins end) > 0)::int as won,
         count(*) filter (where (case me.side when 'red' then m.red_wins - m.blue_wins when 'blue' then m.blue_wins - m.red_wins end) < 0)::int as lost,
         avg(me.match_cost) as avg_cost,
-        count(distinct lower(m.acronym))::int as tournaments
+        count(distinct lower(m.acronym)) filter (where m.name !~* ${MATCHMAKING_NAME_PATTERN})::int as tournaments
       from matches m left join match_players me on me.match_id = m.id and me.user_id = ${playerId}`,
     sql`
       select m.id as match_id, m.name, me.match_cost from match_players me join matches m on m.id = me.match_id

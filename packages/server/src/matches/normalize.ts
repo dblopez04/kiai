@@ -247,6 +247,16 @@ export function parseMatchName(name: string): ParsedMatchName {
   return { acronym: null, red: null, blue: null };
 }
 
+// Matchmaking bots name their lobbies like tournaments ("ROMAI: (A) vs (B)", "ETX: ...", "o!mm Ranked: ...").
+// Case-insensitive, and written so the same pattern works in JavaScript and in Postgres (`~*`).
+export const MATCHMAKING_NAME_PATTERN = "^\\s*(romai|etx|o!mm)(?![a-z0-9_])";
+const MATCHMAKING_NAME = new RegExp(MATCHMAKING_NAME_PATTERN, "i");
+
+/** Lobbies made by a matchmaking bot (ROMAI, ETX, o!mm): casual play, not a tournament. */
+export function isMatchmakingName(name: string): boolean {
+  return MATCHMAKING_NAME.test(name);
+}
+
 /** Lobby names worth fetching during discovery: tournament-style names, or ones naming the player. */
 export function isCandidateName(name: string, playerName: string): boolean {
   if (parseMatchName(name).acronym !== null) return true;
