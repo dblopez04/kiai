@@ -49,6 +49,15 @@ function resultChip(result: MatchListItem["result"]): Html | string {
   return "";
 }
 
+/** The maps left out as warmups, and whether a fetch that may change them is still queued. */
+function warmupChips(m: MatchListItem): Html | string {
+  const maps = m.warmup_maps.length
+    ? html` <span class="chip" title="Left out as warmups">warmup ${m.warmup_maps.map((p) => `#${p}`).join(", ")}</span>`
+    : "";
+  const refetch = m.refetching ? html` <span class="chip" title="Queued to be fetched again; its warmups may still change">fetching</span>` : "";
+  return html`${maps}${refetch}`;
+}
+
 /** "3 – 2" from the player's side when they played, red first otherwise. */
 function scoreLine(m: Pick<MatchListItem, "red_wins" | "blue_wins" | "me">): string {
   if (m.red_wins === null || m.blue_wins === null) return "";
@@ -185,6 +194,7 @@ function matchFilterForm(f: MatchFilters, names: Record<string, string>): Html {
     <div class="row wrap">
       ${kindFieldset(f.hide)}
       <label>Result <select name="result"><option value="">any</option><option value="won" ${f.result === "won" ? html`selected` : ""}>won</option><option value="lost" ${f.result === "lost" ? html`selected` : ""}>lost</option></select></label>
+      <label title="Maps left out as warmups, by count or from the host. None found: tournament and qualifier matches without one.">Warmups <select name="warmups"><option value="">any</option><option value="found" ${f.warmups === "found" ? html`selected` : ""}>found</option><option value="none" ${f.warmups === "none" ? html`selected` : ""}>none found</option></select></label>
       <label class="check"><input type="checkbox" name="played" value="true" ${checked(f.played)}> I played</label>
     </div>
     <div class="row wrap">
@@ -211,7 +221,7 @@ function matchTable(f: MatchFilters, page: MatchPage): Html {
           <tbody>${page.matches.map(
             (m) => html`<tr>
               <td class="nowrap">${fmt.date(m.start_time)}</td>
-              <td class="clip match" title="${m.name}"><a href="/matches/${m.id}">${m.name || `${SOURCE_LABEL[m.source]} #${m.external_id}`}</a>${m.kind !== "tournament" && m.kind !== "other" ? html` <span class="chip">${KIND_LABEL[m.kind]}</span>` : ""}</td>
+              <td class="clip match" title="${m.name}"><a href="/matches/${m.id}">${m.name || `${SOURCE_LABEL[m.source]} #${m.external_id}`}</a>${m.kind !== "tournament" && m.kind !== "other" ? html` <span class="chip">${KIND_LABEL[m.kind]}</span>` : ""}${warmupChips(m)}</td>
               <td class="nowrap">${resultChip(m.result)} ${scoreLine(m)}</td>
               <td class="r">${cost(m.me?.match_cost)}</td>
               <td class="r">${m.me ? html`${m.me.games_played}<span class="muted">/${m.games_count}</span>` : m.games_count}</td>

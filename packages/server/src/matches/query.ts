@@ -23,6 +23,7 @@ import {
   matchKind,
   matchmakingPattern,
   matchUrl,
+  TOURNAMENT_KINDS,
   type MatchKind,
   type MatchmakingBot,
   type MatchSource,
@@ -50,6 +51,8 @@ export interface MatchFilters {
   /** User ids (or names, until resolved) that played against the player. */
   vs: string[];
   result: "won" | "lost" | null;
+  /** `found`: a map was left out as a warmup. `none`: a tournament or qualifier match with none. */
+  warmups: "found" | "none" | null;
   /** Only matches the player has scores in. */
   played: boolean;
   minCost: number | null;
@@ -60,16 +63,20 @@ export interface MatchFilters {
   dateTo: string | null;
 }
 
+/** With no Type given, only tournament matches show. */
+export const DEFAULT_HIDDEN_KINDS: readonly MatchKind[] = MATCH_KINDS.filter((kind) => kind !== "tournament");
+
 export const DEFAULT_MATCH_FILTERS: MatchFilters = {
   q: "",
   sort: "date",
   order: "desc",
   page: 1,
   pageSize: PAGE_SIZE_DEFAULT,
-  hide: [],
+  hide: [...DEFAULT_HIDDEN_KINDS],
   with: [],
   vs: [],
   result: null,
+  warmups: null,
   played: false,
   minCost: null,
   maxCost: null,
@@ -90,20 +97,29 @@ const positiveInt = (value: string | null, fallback: number) => {
   return parsed !== null && parsed >= 1 ? Math.floor(parsed) : fallback;
 };
 const date = (value: string | null) => (value && !Number.isNaN(Date.parse(value)) ? value : null);
-// `hide=romai,etx`, or the Type checkboxes: `show=<kind>` for each one ticked, plus a `show=-` marker so that
-// unticking every box still counts. Everything not shown is hidden.
-export const hiddenKinds = (params: URLSearchParams) => {
+// `hide=romai,etx` (`hide=none` shows every type), or the Type checkboxes: `show=<kind>` for each one
+// ticked, plus a `show=-` marker so that unticking every box still counts. Everything not shown is hidden.
+// Neither: the default, tournaments only.
+export const hiddenKinds = (params: URLSearchParams): MatchKind[] => {
   if (params.has("show")) {
     const shown = new Set(params.getAll("show"));
     return MATCH_KINDS.filter((kind) => !shown.has(kind));
   }
+  if (!params.has("hide")) return [...DEFAULT_HIDDEN_KINDS];
   const hide = new Set(list(params.getAll("hide").join(",")));
   return MATCH_KINDS.filter((kind) => hide.has(kind));
 };
 
+/** Puts the hidden kinds in a link, leaving the default out. */
+export function setHiddenKinds(params: URLSearchParams, hide: readonly MatchKind[]): void {
+  const isDefault = hide.length === DEFAULT_HIDDEN_KINDS.length && DEFAULT_HIDDEN_KINDS.every((kind) => hide.includes(kind));
+  if (!isDefault) params.set("hide", hide.length ? hide.join(",") : "none");
+}
+
 export function parseMatchFilters(params: URLSearchParams): MatchFilters {
   const sort = params.get("sort");
   const result = params.get("result");
+  const warmups = params.get("warmups");
   return {
     q: (params.get("q") ?? "").trim(),
     sort: (MATCH_SORT_KEYS as readonly string[]).includes(sort ?? "") ? (sort as MatchSortKey) : "date",
@@ -114,6 +130,7 @@ export function parseMatchFilters(params: URLSearchParams): MatchFilters {
     with: [...new Set(list(params.get("with")))],
     vs: [...new Set(list(params.get("vs")))],
     result: result === "won" || result === "lost" ? result : null,
+    warmups: warmups === "found" || warmups === "none" ? warmups : null,
     played: params.get("played") === "true",
     minCost: number(params.get("min_cost")),
     maxCost: number(params.get("max_cost")),
@@ -135,10 +152,11 @@ export function matchFiltersToParams(filters: MatchFilters, overrides: Partial<M
   set("order", f.order, DEFAULT_MATCH_FILTERS.order);
   set("page", f.page, 1);
   set("page_size", f.pageSize, PAGE_SIZE_DEFAULT);
-  if (f.hide.length) params.set("hide", f.hide.join(","));
+  setHiddenKinds(params, f.hide);
   if (f.with.length) params.set("with", f.with.join(","));
   if (f.vs.length) params.set("vs", f.vs.join(","));
   set("result", f.result);
+  set("warmups", f.warmups);
   set("played", f.played);
   set("min_cost", f.minCost);
   set("max_cost", f.maxCost);
@@ -243,6 +261,10 @@ export interface MatchListItem {
   result: "won" | "lost" | "draw" | null;
   teammates: PlayerRef[];
   opponents: PlayerRef[];
+  /** Positions of the maps left out as warmups. */
+  warmup_maps: number[];
+  /** Queued to be fetched again (for its host changes, say), so its warmups may still change. */
+  refetching: boolean;
 }
 
 export interface MatchPage {
@@ -285,6 +307,9 @@ function matchConditions(sql: Sql, playerId: number, f: MatchFilters, users: Map
     const lead = sql`(case me.side when 'red' then m.red_wins - m.blue_wins when 'blue' then m.blue_wins - m.red_wins end)`;
     c.push(f.result === "won" ? sql`${lead} > 0` : sql`${lead} < 0`);
   }
+  const hasWarmup = sql`exists (select 1 from match_games g where g.match_id = m.id and g.warmup)`;
+  if (f.warmups === "found") c.push(hasWarmup);
+  if (f.warmups === "none") c.push(sql`${kindOf(sql)} = any(${TOURNAMENT_KINDS as MatchKind[]}::text[]) and not ${hasWarmup}`);
   if (f.minCost !== null) c.push(sql`me.match_cost >= ${f.minCost}`);
   if (f.maxCost !== null) c.push(sql`me.match_cost <= ${f.maxCost}`);
   if (f.minMaps !== null) c.push(sql`m.games_count >= ${f.minMaps}`);
@@ -329,6 +354,8 @@ function toMatchListItem(row: Row): MatchListItem {
     result: row.result,
     teammates: row.teammates ?? [],
     opponents: row.opponents ?? [],
+    warmup_maps: row.warmup_maps ?? [],
+    refetching: row.refetching,
   };
 }
 
@@ -346,7 +373,9 @@ const MATCH_SELECT = (sql: Sql, playerId: number) => sql`
       where o.match_id = m.id and o.user_id <> ${playerId} and me.side is not null and o.side = me.side) as teammates,
     (select coalesce(jsonb_agg(jsonb_build_object('id', o.user_id, 'username', u.username, 'country_code', u.country_code) order by o.side = 'blue', o.match_cost desc), '[]')
       from match_players o left join osu_users u on u.id = o.user_id
-      where o.match_id = m.id and o.user_id <> ${playerId} and (me.side is null or o.side is distinct from me.side)) as opponents
+      where o.match_id = m.id and o.user_id <> ${playerId} and (me.side is null or o.side is distinct from me.side)) as opponents,
+    (select coalesce(jsonb_agg(g.position order by g.position), '[]') from match_games g where g.match_id = m.id and g.warmup) as warmup_maps,
+    exists (select 1 from match_queue q where q.source = m.source and q.external_id = m.external_id and not q.failed) as refetching
   from matches m
   left join match_players me on me.match_id = m.id and me.user_id = ${playerId}`;
 
@@ -579,7 +608,7 @@ export function tournamentFiltersToParams(f: TournamentScoreFilters, overrides: 
   const params = filtersToParams(merged);
   if (merged.player !== "me") params.set("player", merged.player);
   if (merged.match) params.set("match", merged.match);
-  if (merged.hide.length) params.set("hide", merged.hide.join(","));
+  setHiddenKinds(params, merged.hide);
   return params;
 }
 

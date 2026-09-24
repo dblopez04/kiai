@@ -62,7 +62,9 @@ describe("match pages", () => {
     expect(body).toContain("3–2");
     expect(body).toContain("Mate");
     expect(body).toContain("Stable tournament lobbies");
-    for (const kind of ["tournament", "qualifiers", "romai", "etx", "omm", "ranked", "other"]) expect(body).toContain(`name="show" value="${kind}" checked`);
+    // Only tournaments are ticked until the Type boxes are changed.
+    expect(body).toContain('name="show" value="tournament" checked');
+    for (const kind of ["qualifiers", "romai", "etx", "omm", "ranked", "other"]) expect(body).toContain(`name="show" value="${kind}" >`);
   });
 
   it("shows one match with every map, score and match cost", async () => {
