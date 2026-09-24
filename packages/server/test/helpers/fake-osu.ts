@@ -69,7 +69,7 @@ export interface FakeOsu extends OsuClient {
   lobbies: ApiMatchInfo[];
   /** Lazer rooms with all their events. */
   rooms: Map<number, ApiRoomEvents>;
-  /** Ended ranked play rooms for `listRankedPlayRooms`. */
+  /** USER_ID's ended ranked play rooms for `listUserRankedPlayRooms`; other users have none. */
   rankedRooms: ApiRoom[];
   calls: string[];
   /** Throw from a method, once, to simulate an outage. */
@@ -168,15 +168,19 @@ export function fakeOsu(): FakeOsu {
       const ids = full.events.map((e) => e.id);
       return { ...eventPage(full, after), first_event_id: Math.min(...ids), last_event_id: Math.max(...ids) };
     },
-    async listRankedPlayRooms({ limit, cursorString }) {
+    async listUserRankedPlayRooms(userId, { limit, cursorString }) {
       const cursor = decodeCursor(cursorString) as { ends_at: string; id: number } | null;
-      fake.calls.push(`listRankedPlayRooms ${cursor ? cursor.id : ""}`.trim());
+      fake.calls.push(`listUserRankedPlayRooms ${userId} ${cursor ? cursor.id : ""}`.trim());
+      if (userId !== USER_ID) return { rooms: [], cursor_string: null };
       const key = (r: ApiRoom) => [Date.parse(r.ends_at ?? ""), r.id] as const;
       const sorted = fake.rankedRooms.toSorted((a, b) => key(b)[0] - key(a)[0] || b.id - a.id);
       const older = cursor
         ? sorted.filter((r) => key(r)[0] < Date.parse(cursor.ends_at) || (key(r)[0] === Date.parse(cursor.ends_at) && r.id < cursor.id))
         : sorted;
-      return older.slice(0, limit);
+      const rooms = older.slice(0, limit);
+      const last = rooms.at(-1);
+      const more = older.length > limit && last;
+      return { rooms, cursor_string: more ? Buffer.from(JSON.stringify({ ends_at: last.ends_at, id: last.id })).toString("base64url") : null };
     },
   };
 

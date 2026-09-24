@@ -19,7 +19,7 @@ import {
   tournamentFiltersToParams,
 } from "../matches/query.ts";
 import { clearFailed, enqueueMatches, queueOverview, retryFailed } from "../matches/queue.ts";
-import { updateMatchSettings } from "../matches/store.ts";
+import { setNotTournament, updateMatchSettings } from "../matches/store.ts";
 import type { AppDeps } from "./app.ts";
 import { matchesPage, matchPage, tournamentScoresPage } from "./match-views.ts";
 import { messagePage } from "./views.ts";
@@ -154,6 +154,15 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
     });
     if (!ok) return c.html(messagePage("Not found", "That match isn't in the database.", player), 404);
     return c.redirect(`/matches/${id}`, 303);
+  });
+
+  /** `not_tournament=true` for a casual lobby with a tournament-style name; `false` counts it again. */
+  app.post("/matches/:id{[0-9]+}/tournament", async (c) => {
+    const id = positiveId(c.req.param("id"))!;
+    const form = await c.req.parseBody();
+    const notTournament = form.not_tournament === "true";
+    if (!(await setNotTournament(sql, id, notTournament))) return c.html(messagePage("Not found", "That match isn't in the database.", player), 404);
+    return c.redirect(back(notTournament ? "No longer counted as a tournament." : "Counted as a tournament again.", `/matches/${id}`), 303);
   });
 
   app.post("/matches/:id{[0-9]+}/refresh", async (c) => {

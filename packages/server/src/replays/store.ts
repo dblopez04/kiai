@@ -249,6 +249,14 @@ export async function getReplay(sql: Sql, id: string): Promise<ReplayView | null
   return row ? toReplayView(row) : null;
 }
 
+/** These replays, in this order; unknown ids are left out. */
+export async function listReplaysByIds(sql: Sql, ids: readonly string[]): Promise<ReplayView[]> {
+  if (ids.length === 0) return [];
+  const rows = await sql`${sql.unsafe(SELECT)} where r.id = any(${ids}::text[])`;
+  const byId = new Map(rows.map((row) => [row.id as string, toReplayView(row)]));
+  return ids.flatMap((id) => byId.get(id) ?? []);
+}
+
 /** Newest uploads first. */
 export async function listReplays(sql: Sql, limit = 50): Promise<ReplayView[]> {
   const rows = await sql`${sql.unsafe(SELECT)} order by r.uploaded_at desc, r.id limit ${limit}`;

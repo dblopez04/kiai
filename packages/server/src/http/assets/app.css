@@ -128,14 +128,33 @@ details.danger summary { color: var(--alert); }
 
 .tablewrap { overflow-x: auto; }
 table.scores { width: 100%; border-collapse: collapse; }
-table.scores th, table.scores td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
-table.scores th { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+table.scores th, table.scores td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; white-space: nowrap; }
+table.scores th { font-size: 0.75rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 table.scores th.r, table.scores td.r { text-align: right; }
-table.scores td.map { min-width: 16rem; }
+table.scores td { font-variant-numeric: tabular-nums; }
+table.scores tbody tr:last-child td { border-bottom: none; }
+table.scores tbody tr:hover td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+table.scores .mods { flex-wrap: nowrap; }
+table.scores .rank { font-size: 0.85em; background: color-mix(in srgb, currentColor 14%, transparent); }
+/* Clipped cells share the width the fixed columns leave; hover shows the full text. */
+table.scores td.clip { max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+table.scores td.map { width: 100%; min-width: 14rem; }
+table.scores td a { color: var(--text); text-decoration: none; }
+table.scores td a:hover { color: var(--accent); text-decoration: underline; }
+table.scores td.map a, table.scores td.match a { font-weight: 500; }
+table.scores td.map:has(~ td.match) { width: 65%; }
+table.scores td.match { width: 35%; min-width: 10rem; }
+table.scores td.match:has(~ td.people) { width: 50%; min-width: 12rem; }
+table.scores td.people { width: 25%; min-width: 7rem; }
 table.kv { border-collapse: collapse; width: 100%; }
 table.kv th { text-align: left; color: var(--muted); font-weight: 500; padding: 0.25rem 1rem 0.25rem 0; white-space: nowrap; vertical-align: top; }
 table.kv td { padding: 0.25rem 0; }
-.pager { display: flex; justify-content: space-between; align-items: center; margin-top: 0.8rem; }
+.pager { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 0.3rem; margin-top: 0.8rem; }
+.pager .button { min-width: 2.2rem; padding: 0.3rem 0.6rem; text-align: center; font-variant-numeric: tabular-nums; }
+.pager .button.current { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; cursor: default; }
+.pager .button.disabled { opacity: 0.45; cursor: default; }
+.pager .button.disabled:hover { border-color: var(--line); }
+.pager .gap { color: var(--muted); padding: 0 0.2rem; }
 
 .cover { background-size: cover; background-position: center; padding: 0; overflow: hidden; }
 .coverinner { display: flex; gap: 1.2rem; align-items: center; padding: 1.5rem; background: linear-gradient(90deg, color-mix(in srgb, var(--card) 95%, transparent), color-mix(in srgb, var(--card) 70%, transparent)); }
@@ -151,6 +170,13 @@ ul.plain { list-style: none; padding: 0; display: grid; gap: 0.3rem; }
 .replaycard:hover { border-color: var(--accent); }
 .replaycard img { width: 6rem; height: 4.2rem; object-fit: cover; border-radius: 6px; flex: none; }
 textarea.code { font: 0.9em/1.4 ui-monospace, monospace; }
+.settings-groups { justify-self: stretch; display: grid; gap: 0.8rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); }
+fieldset.settings { display: grid; gap: 0.4rem; align-content: start; padding: 0.5rem 0.8rem 0.8rem; }
+fieldset.settings label.check { white-space: normal; align-items: baseline; }
+fieldset.settings label.check small, fieldset.settings label.field small { display: block; }
+fieldset.settings label.field { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; }
+details.advanced { justify-self: stretch; }
+details.advanced > label { display: grid; gap: 0.3rem; margin-top: 0.5rem; }
 .topbar nav.sections { gap: 1.2rem; flex-wrap: wrap; }
 .topbar nav.sections a:not(.brand) { color: var(--muted); text-decoration: none; }
 .topbar nav.sections a:not(.brand):hover { color: var(--accent); }

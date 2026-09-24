@@ -62,6 +62,8 @@ describe("match pages", () => {
     expect(body).toContain("3–2");
     expect(body).toContain("Mate");
     expect(body).toContain("Stable tournament lobbies");
+    for (const kind of ["tournament", "romai", "etx", "omm", "ranked"]) expect(body).toContain(`name="show" value="${kind}" checked`);
+    expect(body).not.toContain(`name="show" value="other"`);
   });
 
   it("shows one match with every map, score and match cost", async () => {
@@ -82,6 +84,19 @@ describe("match pages", () => {
     const detail = (await (await request(`/api/matches/${matchId}`)).json()) as { warmups: number; me: { games_played: number } };
     expect(detail.warmups).toBe(1);
     expect(detail.me.games_played).toBe(4);
+  });
+
+  it("marks a match as not a tournament and back", async () => {
+    expect(await (await request(`/matches/${matchId}`)).text()).toContain("Not a tournament</button>");
+    const response = await post(`/matches/${matchId}/tournament`, { not_tournament: "true" });
+    expect(response.status).toBe(303);
+    const body = await (await request(`/matches/${matchId}`)).text();
+    expect(body).toContain("Stable multiplayer (not a tournament)");
+    expect(body).toContain("Count as a tournament</button>");
+    expect(((await (await request(`/api/matches/${matchId}`)).json()) as { kind: string }).kind).toBe("other");
+    await post(`/matches/${matchId}/tournament`, { not_tournament: "false" });
+    expect(((await (await request(`/api/matches/${matchId}`)).json()) as { kind: string }).kind).toBe("tournament");
+    expect((await post("/matches/999999/tournament", { not_tournament: "true" })).status).toBe(404);
   });
 
   it("imports pasted Elitebotix history and adds single links", async () => {

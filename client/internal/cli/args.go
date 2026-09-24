@@ -22,7 +22,7 @@ type parsedArgs struct {
 }
 
 // parseArgs reads long options (`--name value`, `--name=value`) mixed freely with positionals,
-// unlike the standard flag package, which stops at the first positional (`preset add gatari
+// unlike the standard flag package, which stops at the first positional (`render play.osr
 // --devserver x` must work). `--` ends option parsing.
 func parseArgs(args []string, specs map[string]flagKind) (parsedArgs, error) {
 	out := parsedArgs{strings: map[string]string{}, bools: map[string]bool{}, lists: map[string][]string{}}

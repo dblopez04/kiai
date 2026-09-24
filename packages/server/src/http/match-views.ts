@@ -3,7 +3,7 @@
 
 import { html } from "hono/html";
 import type { DiscoveryState } from "../matches/discovery.ts";
-import type { MatchSource } from "../matches/normalize.ts";
+import { MATCH_KINDS, type MatchKind, type MatchSource } from "../matches/normalize.ts";
 import {
   MATCH_SORT_KEYS,
   matchFiltersToParams,
@@ -22,25 +22,25 @@ import {
 import type { QueueOverview } from "../matches/queue.ts";
 import type { Player } from "../player.ts";
 import type { BeatmapView } from "../scores/query.ts";
-import { checked, filterForm, fmt, layout, modChips, numberValue, rankClass, rankLabel } from "./views.ts";
+import { checked, filterForm, fmt, layout, mapCell, modChips, numberValue, pager, rankClass, rankLabel } from "./views.ts";
 
 type Html = ReturnType<typeof html>;
 
 const SOURCE_LABEL: Record<MatchSource, string> = { stable: "stable", lazer: "ranked play" };
+const KIND_LABEL: Record<MatchKind, string> = { tournament: "tournament", romai: "ROMAI", etx: "ETX", omm: "o!mm", ranked: "ranked play", other: "other" };
+
+/** Every type is ticked unless hidden; the `show=-` marker lets unticked boxes count (see `hiddenKinds`). */
+function kindFieldset(hidden: readonly MatchKind[]): Html {
+  return html`<fieldset class="inline"><legend>Type</legend>
+    <input type="hidden" name="show" value="-">
+    ${MATCH_KINDS.map((kind) => html`<label class="check"><input type="checkbox" name="show" value="${kind}" ${checked(!hidden.includes(kind))}> ${KIND_LABEL[kind]}</label>`)}
+  </fieldset>`;
+}
 const cost = (value: number | null | undefined) => (typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "—");
 const beatmapTitle = (b: BeatmapView | null, beatmapId: number | null) =>
   b ? `${b.artist ?? "Unknown artist"} - ${b.title ?? "Unknown title"}` : beatmapId ? `Beatmap #${beatmapId} (not on osu!)` : "Unknown beatmap";
 const who = (p: { username: string | null; id?: number; user_id?: number }) => p.username ?? `#${p.id ?? p.user_id}`;
 const profile = (id: number) => `https://osu.ppy.sh/users/${id}`;
-
-function pager(pagination: MatchPage["pagination"], link: (page: number) => string): Html | string {
-  if (pagination.total_pages <= 1) return "";
-  return html`<nav class="pager">
-    ${pagination.page > 1 ? html`<a href="${link(pagination.page - 1)}">← Previous</a>` : html`<span></span>`}
-    <span>Page ${pagination.page} of ${fmt.number(pagination.total_pages)}</span>
-    ${pagination.page < pagination.total_pages ? html`<a href="${link(pagination.page + 1)}">Next →</a>` : html`<span></span>`}
-  </nav>`;
-}
 
 function resultChip(result: MatchListItem["result"]): Html | string {
   if (result === "won") return html`<span class="chip win">W</span>`;
@@ -53,6 +53,11 @@ function resultChip(result: MatchListItem["result"]): Html | string {
 function scoreLine(m: Pick<MatchListItem, "red_wins" | "blue_wins" | "me">): string {
   if (m.red_wins === null || m.blue_wins === null) return "";
   return m.me?.side === "blue" ? `${m.blue_wins}–${m.red_wins}` : `${m.red_wins}–${m.blue_wins}`;
+}
+
+/** A one-line, clipped cell of player links; hovering shows every name. */
+function peopleCell(list: PlayerRef[], filter: "with" | "vs"): Html {
+  return html`<td class="clip people" title="${list.map(who).join(", ")}">${people(list, filter)}</td>`;
 }
 
 /** Players linking to their other matches, by id so the links survive name changes. */
@@ -177,13 +182,9 @@ function matchFilterForm(f: MatchFilters, names: Record<string, string>): Html {
       <label class="grow">Against <input name="vs" value="${players(f.vs)}" placeholder="opponents (names or ids), comma-separated" class="wide"></label>
     </div>
     <div class="row wrap">
-      <fieldset class="inline"><legend>Source</legend>
-        <label class="check"><input type="checkbox" name="source" value="stable" ${checked(f.source.includes("stable"))}> stable</label>
-        <label class="check"><input type="checkbox" name="source" value="lazer" ${checked(f.source.includes("lazer"))}> ranked play</label>
-      </fieldset>
+      ${kindFieldset(f.hide)}
       <label>Result <select name="result"><option value="">any</option><option value="won" ${f.result === "won" ? html`selected` : ""}>won</option><option value="lost" ${f.result === "lost" ? html`selected` : ""}>lost</option></select></label>
       <label class="check"><input type="checkbox" name="played" value="true" ${checked(f.played)}> I played</label>
-      <label class="check"><input type="checkbox" name="tournament" value="true" ${checked(f.tournament)}> Tournaments only</label>
     </div>
     <div class="row wrap">
       <label>Match cost <input type="number" name="min_cost" value="${numberValue(f.minCost)}" placeholder="min" step="0.01" class="num"> – <input type="number" name="max_cost" value="${numberValue(f.maxCost)}" placeholder="max" step="0.01" class="num"></label>
@@ -209,13 +210,13 @@ function matchTable(f: MatchFilters, page: MatchPage): Html {
           <tbody>${page.matches.map(
             (m) => html`<tr>
               <td class="nowrap">${fmt.date(m.start_time)}</td>
-              <td class="map"><a href="/matches/${m.id}">${m.name || `${SOURCE_LABEL[m.source]} #${m.external_id}`}</a>${m.source === "lazer" ? html` <span class="chip">ranked play</span>` : ""}</td>
+              <td class="clip match" title="${m.name}"><a href="/matches/${m.id}">${m.name || `${SOURCE_LABEL[m.source]} #${m.external_id}`}</a>${m.kind !== "tournament" && m.kind !== "other" ? html` <span class="chip">${KIND_LABEL[m.kind]}</span>` : ""}</td>
               <td class="nowrap">${resultChip(m.result)} ${scoreLine(m)}</td>
               <td class="r">${cost(m.me?.match_cost)}</td>
               <td class="r">${m.me ? html`${m.me.games_played}<span class="muted">/${m.games_count}</span>` : m.games_count}</td>
               <td class="r">${m.me ? fmt.acc(m.me.avg_accuracy) : "—"}</td>
-              <td>${m.me?.side ? people(m.teammates, "with") : html`<span class="muted">—</span>`}</td>
-              <td>${people(m.opponents, "vs")}</td>
+              ${m.me?.side ? peopleCell(m.teammates, "with") : html`<td class="clip people"><span class="muted">—</span></td>`}
+              ${peopleCell(m.opponents, "vs")}
               <td><a href="${m.url}" target="_blank" rel="noopener noreferrer" title="Open on osu!">↗</a></td>
             </tr>`,
           )}</tbody>
@@ -331,7 +332,7 @@ function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
               <td class="r">${fmt.number(s.countmiss)}</td>
               <td><span class="${rankClass(s.rank)}">${rankLabel(s.rank)}</span></td>
               <td>${modChips(s.mods)}</td>
-              <td class="r" title="${s.pp_source === "local" ? "Local estimate (rosu-pp, without NoFail)" : s.pp_source}">${fmt.pp(s.pp)}${s.pp_source === "local" ? html`<sup>*</sup>` : ""}</td>
+              <td class="r" title="${s.pp_source === "local" ? "Local estimate (rosu-pp, without NoFail)" : s.pp_source}">${fmt.pp(s.pp)}</td>
             </tr>`,
           )}</tbody>
         </table></div>`
@@ -352,7 +353,7 @@ export function matchPage(m: MatchDetail, player: Player, notice?: string): Html
       </div>
       ${headline(m)}
       <p class="muted">
-        ${m.source === "lazer" ? "Lazer ranked play" : m.acronym ? `Tournament ${m.acronym}` : "Stable multiplayer"} ·
+        ${m.kind === "ranked" ? "Lazer ranked play" : m.kind === "tournament" ? `Tournament ${m.acronym}` : m.kind === "other" ? `Stable multiplayer${m.not_tournament ? " (not a tournament)" : ""}` : `${KIND_LABEL[m.kind]} matchmaking`} ·
         ${fmt.dateTime(m.start_time)}${duration !== null ? ` · ${duration} min` : ""}${m.end_time ? "" : " · in progress"} ·
         ${m.games_count} maps · <a href="${m.url}" target="_blank" rel="noopener noreferrer">View on osu! ↗</a>
       </p>
@@ -360,10 +361,17 @@ export function matchPage(m: MatchDetail, player: Player, notice?: string): Html
         <span class="muted">Fetched ${fmt.dateTime(m.fetched_at)} (${m.added_via})</span>
         <button>Fetch again</button>
       </form>
+      ${m.kind === "tournament" || (m.kind === "other" && m.not_tournament)
+        ? html`<form method="post" action="/matches/${m.id}/tournament" class="row wrap small">
+            <input type="hidden" name="not_tournament" value="${m.not_tournament ? "false" : "true"}">
+            ${m.not_tournament
+              ? html`<span class="muted">Left out of tournaments and the tournament count.</span><button>Count as a tournament</button>`
+              : html`<span class="muted">A casual lobby with a tournament-style name?</span><button>Not a tournament</button>`}
+          </form>`
+        : ""}
     </section>
     ${playersTable(m, player.id)}
-    ${m.games.map((g) => gameCard(g, m, player.id))}
-    ${m.games.some((g) => g.scores.some((s) => s.pp_source === "local")) ? html`<p class="muted small">* PP calculated locally with rosu-pp, without NoFail; osu! gives multiplayer scores none.</p>` : ""}`,
+    ${m.games.map((g) => gameCard(g, m, player.id))}`,
     player,
   );
 }
@@ -375,10 +383,7 @@ export function tournamentScoresPage(player: Player, f: TournamentScoreFilters, 
   const extra = html`<div class="row wrap">
     <label>Player <input name="player" value="${f.player === "me" ? "" : (page.player_name ?? f.player)}" placeholder="you (or a name, id, or all)" class="wide"></label>
     <label class="grow">Match <input name="match" value="${f.match}" placeholder="match name words, e.g. OWC 2026" class="wide"></label>
-    <fieldset class="inline"><legend>Source</legend>
-      <label class="check"><input type="checkbox" name="source" value="stable" ${checked(f.source.includes("stable"))}> stable</label>
-      <label class="check"><input type="checkbox" name="source" value="lazer" ${checked(f.source.includes("lazer"))}> ranked play</label>
-    </fieldset>
+    ${kindFieldset(f.hide)}
   </div>`;
   const showPlayer = f.player !== "me";
   return layout(
@@ -395,16 +400,16 @@ export function tournamentScoresPage(player: Player, f: TournamentScoreFilters, 
             <tbody>${page.scores.map(
               (s) => html`<tr>
                 <td><span class="${rankClass(s.rank)}">${rankLabel(s.rank)}</span></td>
-                <td class="map">${s.beatmap ? html`<a href="${s.beatmap.url}" target="_blank" rel="noopener noreferrer">${beatmapTitle(s.beatmap, s.beatmap_id)}</a> <span class="muted">[${s.beatmap.version ?? "?"}]</span>` : beatmapTitle(null, s.beatmap_id)}</td>
+                ${s.beatmap ? mapCell(s.beatmap, s.beatmap.url, true) : html`<td class="clip map">${beatmapTitle(null, s.beatmap_id)}</td>`}
                 <td>${modChips(s.mods)}</td>
-                <td class="r" title="${s.pp_source}">${fmt.pp(s.pp)}${s.pp_source === "local" ? html`<sup>*</sup>` : ""}</td>
+                <td class="r" title="${s.pp_source === "local" ? "Local estimate (rosu-pp, without NoFail)" : s.pp_source}">${fmt.pp(s.pp)}</td>
                 <td class="r">${fmt.acc(s.accuracy)}</td>
                 <td class="r">${fmt.number(s.total_score)}</td>
                 <td class="r">${fmt.number(s.max_combo)}${s.beatmap?.max_combo ? html`<span class="muted">/${fmt.number(s.beatmap.max_combo)}</span>` : ""}</td>
                 <td class="r">${fmt.number(s.countmiss)}</td>
                 <td class="r">${fmt.stars(s.beatmap?.difficulty_rating ?? null)}</td>
                 ${showPlayer ? html`<td>${s.username ?? `#${s.user_id}`}</td>` : ""}
-                <td><a href="/matches/${s.match_id}">${s.match_name || "match"}</a> <span class="muted small">#${s.game_position}</span></td>
+                <td class="clip match" title="${s.match_name ? `${s.match_name} · map ${s.game_position}` : ""}"><span class="muted small">#${s.game_position}</span> <a href="/matches/${s.match_id}">${s.match_name || "match"}</a></td>
                 <td class="nowrap">${fmt.date(s.ended_at)}</td>
               </tr>`,
             )}</tbody>

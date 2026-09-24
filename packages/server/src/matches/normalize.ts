@@ -247,6 +247,29 @@ export function parseMatchName(name: string): ParsedMatchName {
   return { acronym: null, red: null, blue: null };
 }
 
+// Matchmaking bots name their lobbies like tournaments ("ROMAI: (A) vs (B)", "ETX: ...", "o!mm Ranked: ...").
+// Each name prefix matches case-insensitively as a whole word, with a pattern that works in JavaScript and in Postgres (`~*`).
+export const MATCHMAKING_BOTS = { romai: "romai", etx: "etx", omm: "o!mm" } as const;
+export type MatchmakingBot = keyof typeof MATCHMAKING_BOTS;
+
+export const matchmakingPattern = (bot: MatchmakingBot) => `^\\s*${MATCHMAKING_BOTS[bot]}(?![a-z0-9_])`;
+const MATCHMAKING_NAMES = (Object.keys(MATCHMAKING_BOTS) as MatchmakingBot[]).map((bot) => [bot, new RegExp(matchmakingPattern(bot), "i")] as const);
+
+/** The matchmaking bot (ROMAI, ETX, o!mm) that made a lobby, if any: casual play, not a tournament. */
+export function matchmakingBot(name: string): MatchmakingBot | null {
+  return MATCHMAKING_NAMES.find(([, pattern]) => pattern.test(name))?.[0] ?? null;
+}
+
+/** What a match is: a tournament match, one matchmaking bot's lobby, a ranked play room, or (not filterable) any other lobby. */
+export const MATCH_KINDS = ["tournament", "romai", "etx", "omm", "ranked"] as const;
+export type MatchKind = (typeof MATCH_KINDS)[number] | "other";
+
+/** `notTournament`: the player marked a tournament-style name as a casual lobby. */
+export function matchKind(match: { source: MatchSource; name: string; acronym: string | null; notTournament?: boolean }): MatchKind {
+  if (match.source === "lazer") return "ranked";
+  return matchmakingBot(match.name) ?? (match.acronym !== null && !match.notTournament ? "tournament" : "other");
+}
+
 /** Lobby names worth fetching during discovery: tournament-style names, or ones naming the player. */
 export function isCandidateName(name: string, playerName: string): boolean {
   if (parseMatchName(name).acronym !== null) return true;

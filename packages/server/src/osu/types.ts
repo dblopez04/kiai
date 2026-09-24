@@ -171,6 +171,13 @@ export interface ApiRoom {
   recent_participants?: ApiUserCompact[];
 }
 
+/** A player's ranked play history: `GET /users/{id}/ranked-play` as JSON. */
+export interface ApiRoomList {
+  rooms: ApiRoom[];
+  /** Null on the last page. */
+  cursor_string?: string | null;
+}
+
 export interface ApiPlaylistItem {
   id: number;
   room_id?: number;

@@ -2,18 +2,17 @@
 
 ## Pieces
 
-**Client** (`client/`, Go, standard library only): one static binary on the gaming PC,
-later also a systemd user service.
+**Client** (`client/`, Go, standard library only): one static binary on the gaming PC, run
+as a systemd user service. Its job is the replay watcher.
 
-- Presets and `.desktop` entries (done).
-- `kiai render <file.osr>` (done): uploads a replay, waits for the render, and uploads the map
-  from the local Songs folder when the server can't get it.
 - Replay watcher (done): `kiai watch`, installed as a systemd user unit by `kiai watch install`.
   osu! stable writes exported replays (F2) to `<osu path>/Replays/`, and osu-winello records the
   osu! path in `~/.local/share/osuconfig/osupath`. lazer writes exports to
   `~/.local/share/osu/exports`. The watcher polls both every 3 s (a file is uploaded once its size
-  holds still), uploads each new `.osr` with the token, tags it with the server from
-  `session.json`, and follows the render, uploading the map when the server asks for it.
+  holds still), uploads each new `.osr` with the token, tags it with `devserver` from
+  `config.json`, and follows the render, uploading the map when the server asks for it.
+- `kiai render <file.osr>` (done): the same for one replay by hand. It waits for the render.
+- `kiai skin upload` (done): adds a skin for render presets.
 
 **Server** (`packages/server`): docker compose on the homelab.
 
@@ -22,7 +21,7 @@ later also a systemd user service.
 | `server` | Private score library UI + API on :8080, and the score sync worker (`serve` runs both; `web` / `worker` split them) | done |
 | `postgres` | Scores, metadata and the job queues | done |
 | `render` / `render-cpu` | danser + Xvfb (`render.Dockerfile`), compose profiles `nvidia` and `cpu`; runs `render-worker` | done |
-| `public` | The public replay app (`http/public.ts`, `server public`): replay pages and videos only, on :8081 | done |
+| `public` | The public replay app (`http/public.ts`, `server public`): replay pages, videos and the gallery only, on :8081 | done |
 | `caddy` | Profile `tunnel`: proxies everything it gets to the public app (`deploy/Caddyfile`) | done |
 | `cloudflared` | Profile `tunnel`: Cloudflare Tunnel with a single `TUNNEL_TOKEN`, hostname → `http://caddy:80` | done |
 
@@ -58,7 +57,7 @@ reads osu! with a client-credentials token, so there's no osu! sign-in. The play
 | `scores/importer.ts` | Recent sync and history import (profile most-played list → per-map scores), checkpointed |
 | `scores/refresh.ts` | Refresh all PP; zero-PP backfill |
 | `scores/pp.ts` | Local PP with rosu-pp-js |
-| `scores/query.ts` | **Filters shared by the UI, the API and CSV.** The replay gallery should use `parseScoreFilters` + `scoreConditions` so its search matches |
+| `scores/query.ts` | **Filters shared by the UI, the API, CSV, tournament scores and the replay gallery** (`parseScoreFilters`, `scoreConditions`, `scoreOrder`) |
 | `scores/csv.ts` | CSV rows and atomic snapshots |
 | `sync/queue.ts` | `sync_runs` job queue: one active job per player, one running job overall, leases with heartbeats, the reset archive |
 | `sync/runner.ts`, `sync/worker.ts` | Run jobs; queue scheduled recent syncs |
@@ -76,14 +75,14 @@ is private like the score library.
 | `matches/cost.ts` | Bathbot's match cost (`process_match`), per-game winners, sides and score line. Pure |
 | `matches/store.ts` | Fetch every event page (101 per request), save, local PP (rosu-pp, without NF), recompute match costs |
 | `matches/queue.ts` | Fetch queue: requested (0) → refreshing in-progress matches (1) → discovery probes (2); backoff, permanent failures for private/missing matches |
-| `matches/discovery.ts` | Stable crawler over `GET /matches?sort=id_asc` (cursor = base64url JSON `{"match_id"}`), two hours behind, probing tournament-style names; lazer crawler over ended ranked play rooms with a watermark |
+| `matches/discovery.ts` | Stable crawler over `GET /matches?sort=id_asc` (cursor = base64url JSON `{"match_id"}`), two hours behind, probing tournament-style names; lazer crawler over the player's ranked play history (`/users/{id}/ranked-play`, a website route that returns JSON without a token; 50 a page, cursor `{"ends_at", "id"}`) with a watermark |
 | `matches/worker.ts` | Queue first, then crawl (stable 3 turns in 4). Runs next to the sync worker with the same rate limiter |
 | `matches/query.ts` | Match filters relative to the player (with/against/result/match cost), match detail, tournament score search on `match_score_rows` through `scoreConditions` |
 | `http/match-routes.ts`, `http/match-views.ts` | Pages and API |
 
-Things that are not verified against live osu! yet (the tests use fakes): the ranked play room
-listing's cursor (`{"ends_at", "id"}` for `sort=ended`), whether `recent_participants` always
-includes both ranked play players, and ranked play's `details.teams` shape. Ranked play is
+The ranked play history route and its cursor were checked against live osu! (2026-09-24). It
+lists rooms where the player set a score, so a room left before finishing a map is missed. Not
+verified yet (the tests use fakes): ranked play's `details.teams` shape. Ranked play is
 decided by more than map wins, so its score line only counts maps won.
 
 Differences from the proof of concept:
@@ -106,13 +105,15 @@ Phases 3–5 implement all six steps, plus the score link. Modules:
 | `replays/store.ts` | Saving uploads (deduplicated by SHA-256, random 10-character ids), replay views, `linkReplays` |
 | `render/maps.ts` | `beatmap_files` (every extracted .osu by MD5), safe .osz extraction (yauzl, no path escapes, size caps), mirror downloads, `ensureBeatmap` |
 | `render/queue.ts` | `render_jobs`: one unfinished job per replay, `for update skip locked` claims so several slots can run, leases with heartbeats, 3 attempts |
-| `render/danser.ts` | Runs `danser-cli` under `xvfb-run` in its own process group; progress from danser's log; timeout |
+| `render/danser.ts` | Runs `danser-cli` under `xvfb-run` (and `vglrun` for GPU GL) in its own process group; progress and GL renderer from danser's log; timeout |
+| `render/settings-form.ts` | The danser settings the preset editor shows as checkboxes, menus and numbers |
 | `replays/attributes.ts` | Step 3: the map with the replay's mods applied (rosu-pp), stored in `replays.attributes` |
 | `render/rules.ts` | Rule expressions (`HD and ar < 10.3`): parser, matcher, and the facts a replay offers |
 | `render/presets.ts` | `render_presets`, `render_rules` (ordered, first match wins, `default` otherwise), skins in `data/skins` |
 | `render/notify.ts` | Step 6: Discord bot DM or webhook, once per job |
 | `http/render-settings.ts` | The editor at `/render`: presets, rules, skins, dry run |
-| `http/public.ts` | The public replay app |
+| `http/public.ts` | The public replay app: replay pages, videos, the gallery |
+| `replays/gallery.ts` | Phase 6: rendered replays as score-shaped rows (`s`, `b`), so `scoreConditions` filters them unchanged; best per map by beatmap id, or MD5 for unknown maps |
 | `render/worker.ts` | Claim → map → link → render → record; `needs_map` parks a job until its .osz is uploaded |
 | `http/replays.ts` | Upload API (bearer `UPLOAD_TOKEN`), replay JSON, video with byte ranges, private replay pages |
 
@@ -125,8 +126,14 @@ What the code relies on from danser 0.11's source:
   therefore means "exit 0 and the video exists".
 - The release bundles its own ffmpeg 7 (with NVENC) in `ffmpeg/`. Its rpath is broken, so the
   worker sets `LD_LIBRARY_PATH`.
-- Under Xvfb, GL runs on Mesa (llvmpipe, on the CPU); only encoding uses the GPU. If rendering is
-  too slow on the homelab, the next step is a headless Xorg with the NVIDIA driver instead of Xvfb.
+- Under plain Xvfb, GL runs on Mesa (llvmpipe, on the CPU) and only encoding uses the GPU, which
+  made renders very slow. With `RENDER_GL=gpu` (the nvidia profile) danser runs under VirtualGL's
+  `vglrun -d egl`: GL goes to the GPU through NVIDIA's EGL, the window stays on Xvfb, and
+  `VGL_READBACK=none` skips copying frames back to it. danser logs `GL Renderer: <name>`; the
+  worker repeats it and warns when it's a software renderer. o!rdr's client gets the same effect
+  by requiring a real display.
+- `-skip` starts at the first hit object (o!rdr's default); presets turn it on with "Skip the intro".
+- The recording ffmpeg command adds `-movflags +faststart`, so videos stream in browsers and Discord.
 
 1. Upload `.osr` → parse the header: beatmap MD5, mods, player, and score stats.
 2. Find the map by MD5: osu! API v2 `beatmaps/lookup?checksum=` or a mirror, then download
@@ -141,18 +148,22 @@ What the code relies on from danser 0.11's source:
    3. default                   → "default"
    ```
 5. Render: `danser-cli -replay <osr> -record -out <id> -settings <base> -skin <skin>
-   -sPatch '<preset json>' -quickstart -noupdatecheck`. `-sPatch` patches the loaded
-   settings for that one run, so a preset is a base settings file plus a JSON patch.
+   -sPatch '<preset json>' -quickstart -noupdatecheck [-skip]`. `-sPatch` patches the loaded
+   settings for that one run, so a preset is a base settings file plus a JSON patch. The
+   editor shows the common settings as checkboxes and menus (`render/settings-form.ts`, with
+   danser's defaults, so the patch keeps only what differs) and everything else as JSON. New
+   presets start as a copy of `default` (or of the preset whose Copy link was used).
 6. Notify. Discord DMs need a bot that shares a server with the user, since webhooks can't
-   send DMs. The message is a rich embed (cover, mods, accuracy, pp, preset used) plus the
-   replay page link, whose `og:video` tags make Discord play the video inline. A webhook to
-   a private channel is the no-setup alternative.
+   send DMs. The message is plain text: Discord doesn't unfurl links in a message that carries
+   its own embed. Videos are never uploaded to Discord: the message links the replay page, whose
+   `og:video` and `twitter:card=player` tags make Discord play the video inline. A webhook to a private channel is the no-setup alternative.
 
 ## Deployment facts
 
 - danser 0.11 ships Linux builds for x86_64 only and uses BASS, so the render host must
   be x86_64.
-- danser opens a hidden GLFW window, so the worker needs Xvfb plus the GPU.
+- danser opens a hidden GLFW window, so the worker needs Xvfb plus the GPU (VirtualGL bridges
+  the two; the container needs NVIDIA's `graphics` driver capability for it).
 - The target host is x86_64 with an NVIDIA GTX 1050 Ti on Docker. That means
   nvidia-container-toolkit on the host and a compose profile for NVIDIA. Pascal NVENC
   handles H.264 and HEVC but not AV1, so presets default to `h264_nvenc`. Other GPUs get
@@ -167,7 +178,8 @@ What the code relies on from danser 0.11's source:
 
 ## Roadmap
 
-1. **Done:** repo scaffold, client presets and `.desktop` entries (ported to Go).
+1. **Done:** repo scaffold and the Go client. (osu-winello launch presets were dropped later as
+   out of scope.)
 2. **Done:** private single-player score library (sync worker, search/filter, local PP, CSV,
    web UI, compose). Match database: Elitebotix import, discovery, Bathbot match costs,
    tournament score search.
@@ -180,5 +192,6 @@ What the code relies on from danser 0.11's source:
 5. **Done:** render presets and rules (picked by the worker once the map's attributes are
    known; jobs record the preset and why), skin uploads (editor and `kiai skin upload`), and
    the editor UI with a dry run.
-6. Gallery with the score library's filters.
+6. **Done:** the public gallery at `/` searches rendered replays with the score library's filters
+   (`replays/gallery.ts`), with osu!'s pp for linked plays and rosu-pp's estimate otherwise.
 7. Later: the skillset checker, once it settles in its own repo.

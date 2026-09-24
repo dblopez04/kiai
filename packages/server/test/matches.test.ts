@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { analyzeMatch, type CostGame } from "../src/matches/cost.ts";
 import { crawlLazer, crawlStable, encodeCursor, scanStableFrom } from "../src/matches/discovery.ts";
 import { parseMatchRefs } from "../src/matches/import.ts";
-import { isCandidateName, parseMatchName } from "../src/matches/normalize.ts";
+import { isCandidateName, matchmakingBot, parseMatchName } from "../src/matches/normalize.ts";
 import {
   canonicalMatchFilters,
   getMatchDetail,
@@ -14,7 +14,7 @@ import {
   resolveUsers,
 } from "../src/matches/query.ts";
 import { enqueueMatches, queueOverview } from "../src/matches/queue.ts";
-import { fetchMatch, ingestMatch, updateMatchSettings } from "../src/matches/store.ts";
+import { fetchMatch, ingestMatch, setNotTournament, updateMatchSettings } from "../src/matches/store.ts";
 import { createMatchStepper, type MatchWorkerDeps } from "../src/matches/worker.ts";
 import { createPpCalculator } from "../src/scores/pp.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
@@ -128,6 +128,16 @@ describe("names and imports", () => {
     expect(parseMatchName("5WC: Team A VS. Team B")).toEqual({ acronym: "5WC", red: "Team A", blue: "Team B" });
     expect(parseMatchName("ACR: Qualifiers Lobby 3")).toEqual({ acronym: "ACR", red: null, blue: null });
     expect(parseMatchName("peppy's game")).toEqual({ acronym: null, red: null, blue: null });
+  });
+
+  it("recognizes matchmaking bot lobbies", () => {
+    expect(matchmakingBot("ROMAI: (tester) vs (RivalTwo)")).toBe("romai");
+    expect(matchmakingBot("etx: (tester) vs (RivalTwo)")).toBe("etx");
+    expect(matchmakingBot("o!mm Ranked: tester vs RivalTwo")).toBe("omm");
+    expect(matchmakingBot("O!MM: casual")).toBe("omm");
+    for (const name of ["ROMAIC: (A) vs (B)", "ETXC 2026: (A) vs (B)", "OWC 2025: (ETX) vs (Japan)", "peppy's o!mm lobby"]) {
+      expect(matchmakingBot(name)).toBeNull();
+    }
     expect(isCandidateName("4* auto host", "tester")).toBe(false);
     expect(isCandidateName("tester's lobby", "tester")).toBe(true);
   });
@@ -284,6 +294,57 @@ describe("searching matches", () => {
     expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, played: 2, won: 1, lost: 1, tournaments: 3 });
   });
 
+  it("hides tournaments, each matchmaking bot or ranked play, but never other lobbies", async () => {
+    const duel = (id: number, name: string) =>
+      stableMatch({ id, name, games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 500_000], [OPPONENT_B, 400_000]] }] });
+    await save(duel(4, "ROMAI: (tester) vs (RivalTwo)"));
+    await save(duel(5, "ETX: (tester) vs (RivalTwo)"));
+    await save(duel(6, "o!mm Ranked: tester vs RivalTwo"));
+    await save(duel(7, "tester's lobby"));
+    const all = (await listMatches(db.sql, USER_ID, parseMatchFilters(q()))).matches;
+    expect(Object.fromEntries(all.map((m) => [m.external_id, m.kind]))).toEqual({
+      1: "tournament", 2: "tournament", 3: "tournament", 4: "romai", 5: "etx", 6: "omm", 7: "other",
+    });
+    expect((await names({ hide: "tournament" })).sort()).toEqual([4, 5, 6, 7]);
+    expect((await names({ hide: "romai" })).sort()).toEqual([1, 2, 3, 5, 6, 7]);
+    expect((await names({ hide: "romai,etx,omm" })).sort()).toEqual([1, 2, 3, 7]);
+    // `other` has no box, so it can't be hidden, like any unknown kind.
+    expect((await names({ hide: "other,bogus" })).length).toBe(7);
+    // The form sends the ticked boxes, and a marker so unticking all of them still counts.
+    const form = (...shown: string[]) => new URLSearchParams([["show", "-"], ...shown.map((kind): [string, string] => ["show", kind])]);
+    const shown = async (...kinds: string[]) =>
+      (await listMatches(db.sql, USER_ID, parseMatchFilters(form(...kinds)))).matches.map((m) => m.external_id).sort();
+    expect(await shown("tournament", "romai", "etx", "omm", "ranked")).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(await shown("tournament", "ranked")).toEqual([1, 2, 3, 7]);
+    expect(await shown()).toEqual([7]);
+    expect(parseMatchFilters(form("tournament", "ranked")).hide).toEqual(["romai", "etx", "omm"]);
+    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 7, tournaments: 3 });
+    const scores = async (params: Record<string, string>) =>
+      (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
+    expect(await scores({})).toBe(11);
+    expect(await scores({ hide: "romai,etx,omm" })).toBe(8);
+    expect(await scores({ hide: "tournament" })).toBe(4);
+  });
+
+  it("stops counting a casual lobby with a tournament-style name as a tournament", async () => {
+    const [row] = await db.sql<{ id: number }[]>`select id from matches where external_id = 2`;
+    const id = row!.id;
+    const kind = async () => (await listMatches(db.sql, USER_ID, parseMatchFilters(q({ q: "ABC" })))).matches[0]!.kind;
+    expect(await setNotTournament(db.sql, id, true)).toBe(true);
+    expect(await kind()).toBe("other");
+    expect(await names({ hide: "tournament" })).toEqual([2]);
+    expect(await matchStats(db.sql, USER_ID)).toMatchObject({ matches: 3, tournaments: 2 });
+    const scores = async (params: Record<string, string>) =>
+      (await listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)))).pagination.total_count;
+    expect(await scores({ hide: "tournament" })).toBe(2);
+    // Fetching the match again keeps the mark.
+    await save(stableMatch({ id: 2, name: "ABC: (tester) vs (RivalTwo)", games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 1], [OPPONENT_B, 2]] }] }));
+    expect(await kind()).toBe("other");
+    expect(await setNotTournament(db.sql, id, false)).toBe(true);
+    expect(await kind()).toBe("tournament");
+    expect(await setNotTournament(db.sql, 999_999, true)).toBe(false);
+  });
+
   it("searches tournament scores with the score library's filters", async () => {
     const list = async (params: Record<string, string>) => listTournamentScores(db.sql, USER_ID, parseTournamentScoreFilters(q(params)));
     const mine = await list({ sort: "pp" });
@@ -354,27 +415,31 @@ describe("match worker", () => {
     expect(state!.cursor).toEqual({ lastId: 9 });
   });
 
-  it("walks ranked play rooms back to the last pass and queues the player's rooms", async () => {
+  it("walks the player's ranked play history back to the last pass and queues every room", async () => {
     const mine = rankedPlayRoom(5001, [{ beatmapId: 21, scores: [[USER_ID, 1], [OPPONENT_A, 2]] }], "2026-09-01T11:00:00Z");
     osu.rooms.set(5001, mine.events);
     osu.rankedRooms = [
       mine.room,
-      ...Array.from({ length: 300 }, (_, i) => ({ id: 6000 + i, ends_at: new Date(Date.parse("2026-09-02T00:00:00Z") + i * 1000).toISOString(), recent_participants: [USERS[2]!] })),
+      ...Array.from({ length: 120 }, (_, i) => ({ id: 6000 + i, ends_at: new Date(Date.parse("2026-09-02T00:00:00Z") + i * 1000).toISOString() })),
     ];
     const deps = { sql: db.sql, osu, playerId: USER_ID, playerName: "tester" };
     expect(await crawlLazer(deps)).toBe("worked");
+    expect(await crawlLazer(deps)).toBe("worked");
     expect(await crawlLazer(deps)).toBe("idle");
-    expect((await db.sql`select source, external_id from match_queue`).map((r) => r.external_id)).toEqual([5001]);
-    const [state] = await db.sql`select cursor, scanned from match_discovery where source = 'lazer'`;
-    expect(state!.scanned).toBe(301);
-    expect(state!.cursor).toEqual({ watermark: { ends_at: osu.rankedRooms[300]!.ends_at, id: 6299 } });
+    expect(osu.calls).toEqual([`listUserRankedPlayRooms ${USER_ID}`, `listUserRankedPlayRooms ${USER_ID} 6070`, `listUserRankedPlayRooms ${USER_ID} 6020`]);
+    const queued = (await db.sql`select external_id from match_queue where source = 'lazer' order by external_id`).map((r) => Number(r.external_id));
+    expect(queued).toEqual([5001, ...Array.from({ length: 120 }, (_, i) => 6000 + i)]);
+    const [state] = await db.sql`select cursor, scanned, found from match_discovery where source = 'lazer'`;
+    expect(state!.scanned).toBe(121);
+    expect(state!.found).toBe(121);
+    expect(state!.cursor).toEqual({ watermark: { ends_at: osu.rankedRooms[120]!.ends_at, id: 6119 } });
 
     // The next pass stops at the watermark.
-    osu.rankedRooms.push({ id: 7000, ends_at: "2026-09-03T00:00:00Z", recent_participants: [USERS[0]!] });
+    osu.rankedRooms.push({ id: 7000, ends_at: "2026-09-03T00:00:00Z" });
     expect(await crawlLazer(deps)).toBe("idle");
-    expect(osu.calls.at(-1)).toBe("listRankedPlayRooms");
+    expect(osu.calls.at(-1)).toBe(`listUserRankedPlayRooms ${USER_ID}`);
     const [next] = await db.sql`select cursor, scanned from match_discovery where source = 'lazer'`;
-    expect(next!.scanned).toBe(302);
+    expect(next!.scanned).toBe(122);
     expect(next!.cursor).toEqual({ watermark: { ends_at: "2026-09-03T00:00:00Z", id: 7000 } });
     expect(encodeCursor({ a: 1 })).toBe(Buffer.from('{"a":1}').toString("base64url"));
   });

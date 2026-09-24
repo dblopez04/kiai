@@ -2,7 +2,7 @@
 
 import { html } from "hono/html";
 import { MOD_CATEGORIES, STANDARD_MODS, modDescription, modLabel, modSettingLabels, type ScoreMod } from "../scores/mods.ts";
-import { filtersToParams, SORT_KEYS, type ScoreFilters, type ScorePage, type ScoreStats, type ScoreView } from "../scores/query.ts";
+import { filtersToParams, SORT_KEYS, type BeatmapView, type ScoreFilters, type ScorePage, type ScoreStats, type ScoreView } from "../scores/query.ts";
 import type { SyncOverview, SyncRun } from "../sync/queue.ts";
 import type { Player } from "../player.ts";
 import type { RenderPreset } from "../render/presets.ts";
@@ -34,6 +34,50 @@ export const rankLabel = (rank: string) => RANK_LABEL[rank] ?? rank;
 export const rankClass = (rank: string) => `rank rank-${rank.toLowerCase()}`;
 
 const mapTitle = (s: ScoreView) => `${s.beatmap.artist ?? "Unknown artist"} - ${s.beatmap.title ?? "Unknown title"}`;
+
+/** A one-line table cell for a beatmap: title [version] artist, clipped, with the full name on hover. */
+export function mapCell(b: Pick<BeatmapView, "artist" | "title" | "version">, href: string, external = false): Html {
+  const title = b.title ?? "Unknown title";
+  const artist = b.artist ?? "Unknown artist";
+  const version = b.version ?? "?";
+  return html`<td class="clip map" title="${artist} - ${title} [${version}]"><a href="${href}" ${external ? html`target="_blank" rel="noopener noreferrer"` : ""}>${title}</a> <span class="muted">[${version}]</span> <span class="muted small">${artist}</span></td>`;
+}
+
+// ---------- pagination ----------
+
+/**
+ * The pages a pager shows: the first and last, and two either side of the current one. `null`
+ * marks a gap; a gap of exactly one page shows that page instead, since "…" would be no shorter.
+ */
+export function pageNumbers(page: number, totalPages: number): (number | null)[] {
+  const shown = new Set([1, totalPages]);
+  for (let p = page - 2; p <= page + 2; p++) if (p >= 1 && p <= totalPages) shown.add(p);
+  const out: (number | null)[] = [];
+  let last = 0;
+  for (const p of [...shown].sort((a, b) => a - b)) {
+    if (p - last === 2) out.push(last + 1);
+    else if (p - last > 2) out.push(null);
+    out.push(p);
+    last = p;
+  }
+  return out;
+}
+
+export function pager(pagination: { page: number; total_pages: number }, link: (page: number) => string): Html | string {
+  const { page, total_pages } = pagination;
+  if (total_pages <= 1) return "";
+  return html`<nav class="pager" aria-label="Pages">
+    ${page > 1 ? html`<a class="button" href="${link(page - 1)}" rel="prev">‹ Prev</a>` : html`<span class="button disabled">‹ Prev</span>`}
+    ${pageNumbers(page, total_pages).map((p) =>
+      p === null
+        ? html`<span class="gap">…</span>`
+        : p === page
+          ? html`<span class="button current" aria-current="page">${fmt.number(p)}</span>`
+          : html`<a class="button" href="${link(p)}">${fmt.number(p)}</a>`,
+    )}
+    ${page < total_pages ? html`<a class="button" href="${link(page + 1)}" rel="next">Next ›</a>` : html`<span class="button disabled">Next ›</span>`}
+  </nav>`;
+}
 
 // ---------- layout ----------
 
@@ -259,9 +303,9 @@ function scoreTable(f: ScoreFilters, page: ScorePage): Html {
           <tbody>${scores.map(
             (s) => html`<tr>
               <td><span class="${rankClass(s.rank)}">${rankLabel(s.rank)}</span></td>
-              <td class="map"><a href="/scores/${s.id}">${mapTitle(s)}</a> <span class="muted">[${s.beatmap.version ?? "?"}]</span></td>
+              ${mapCell(s.beatmap, `/scores/${s.id}`)}
               <td>${modChips(s.mods)}</td>
-              <td class="r" title="${s.pp_source === "local" ? `Local estimate (${s.pp_calculator ?? "rosu-pp"})` : s.pp_source}">${fmt.pp(s.pp)}${s.pp_source === "local" ? html`<sup>*</sup>` : ""}</td>
+              <td class="r" title="${s.pp_source === "local" ? `Local estimate (${s.pp_calculator ?? "rosu-pp"})` : s.pp_source}">${fmt.pp(s.pp)}</td>
               <td class="r">${fmt.acc(s.accuracy)}</td>
               <td class="r">${fmt.number(s.max_combo)}${s.beatmap.max_combo ? html`<span class="muted">/${fmt.number(s.beatmap.max_combo)}</span>` : ""}</td>
               <td class="r">${fmt.number(s.countmiss)}</td>
@@ -269,15 +313,8 @@ function scoreTable(f: ScoreFilters, page: ScorePage): Html {
               <td class="nowrap">${fmt.date(s.ended_at)}</td>
             </tr>`,
           )}</tbody>
-        </table></div>
-        ${scores.some((s) => s.pp_source === "local") ? html`<p class="muted small">* PP calculated locally (loved, unranked or no longer on osu!).</p>` : ""}`}
-    ${pagination.total_pages > 1
-      ? html`<nav class="pager">
-          ${pagination.page > 1 ? html`<a href="${link(pagination.page - 1)}">← Previous</a>` : html`<span></span>`}
-          <span>Page ${pagination.page} of ${fmt.number(pagination.total_pages)}</span>
-          ${pagination.page < pagination.total_pages ? html`<a href="${link(pagination.page + 1)}">Next →</a>` : html`<span></span>`}
-        </nav>`
-      : ""}
+        </table></div>`}
+    ${pager(pagination, link)}
   </section>`;
 }
 

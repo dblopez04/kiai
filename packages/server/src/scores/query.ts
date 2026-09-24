@@ -1,5 +1,5 @@
 // Searching the score library. The filter parameters and their meaning are shared by the web UI,
-// the JSON API and CSV exports, and are meant to be reused by the replay gallery.
+// the JSON API, CSV exports, tournament score search and the public replay gallery.
 
 import type { PendingQuery, Row } from "postgres";
 import type { Sql } from "../db/index.ts";
@@ -333,8 +333,8 @@ export function toScoreView(row: Row): ScoreView {
   };
 }
 
-// Whitelisted, so safe to splice into ORDER BY.
-const orderBy = (sql: Sql, table: string, f: ScoreFilters) =>
+// Whitelisted, so safe to splice into ORDER BY. The replay gallery sorts with it too.
+export const scoreOrder = (sql: Sql, table: string, f: ScoreFilters) =>
   sql.unsafe(`${table}.${f.sort} ${f.order === "asc" ? "asc" : "desc"} nulls last, ${table}.id desc`);
 
 const FROM = "from scores s join beatmaps b on b.id = s.beatmap_id";
@@ -356,12 +356,12 @@ export async function listScores(sql: Sql, userId: number, f: ScoreFilters): Pro
   const where = scoreConditions(sql, userId, f);
   const [rows, [count]] = f.bestOnly
     ? await Promise.all([
-        sql`select * from (${bestPerMap(sql, userId, f)}) t order by ${orderBy(sql, "t", f)} limit ${f.pageSize} offset ${offset}`,
+        sql`select * from (${bestPerMap(sql, userId, f)}) t order by ${scoreOrder(sql, "t", f)} limit ${f.pageSize} offset ${offset}`,
         sql<{ total: number }[]>`select count(distinct s.beatmap_id)::int as total ${sql.unsafe(FROM)} where ${where}`,
       ])
     : await Promise.all([
         sql`select s.*, to_jsonb(b) as beatmap ${sql.unsafe(FROM)} where ${where}
-          order by ${orderBy(sql, "s", f)} limit ${f.pageSize} offset ${offset}`,
+          order by ${scoreOrder(sql, "s", f)} limit ${f.pageSize} offset ${offset}`,
         sql<{ total: number }[]>`select count(*)::int as total ${sql.unsafe(FROM)} where ${where}`,
       ]);
   const total = count?.total ?? 0;
@@ -377,7 +377,7 @@ export async function listScores(sql: Sql, userId: number, f: ScoreFilters): Pro
  */
 export async function* streamScores(sql: Sql, userId: number, f: ScoreFilters): AsyncGenerator<ScoreView> {
   const query = f.bestOnly
-    ? sql`select * from (${bestPerMap(sql, userId, f)}) t order by ${orderBy(sql, "t", f)}`
+    ? sql`select * from (${bestPerMap(sql, userId, f)}) t order by ${scoreOrder(sql, "t", f)}`
     : sql`select s.*, to_jsonb(b) as beatmap ${sql.unsafe(FROM)} where ${scoreConditions(sql, userId, f)} order by s.id asc`;
   for await (const rows of query.cursor(500)) {
     for (const row of rows) yield toScoreView(row);
