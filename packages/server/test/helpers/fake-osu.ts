@@ -171,6 +171,7 @@ export function fakeOsu(): FakeOsu {
     async listUserRankedPlayRooms(userId, { limit, cursorString }) {
       const cursor = decodeCursor(cursorString) as { ends_at: string; id: number } | null;
       fake.calls.push(`listUserRankedPlayRooms ${userId} ${cursor ? cursor.id : ""}`.trim());
+      check("listUserRankedPlayRooms");
       if (userId !== USER_ID) return { rooms: [], cursor_string: null };
       const key = (r: ApiRoom) => [Date.parse(r.ends_at ?? ""), r.id] as const;
       const sorted = fake.rankedRooms.toSorted((a, b) => key(b)[0] - key(a)[0] || b.id - a.id);
