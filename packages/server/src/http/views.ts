@@ -294,7 +294,7 @@ function scoreTable(f: ScoreFilters, page: ScorePage): Html {
   const link = (p: number) => `/?${filtersToParams(f, { page: p }).toString()}`;
   return html`<section class="card" aria-label="Scores">
     <div class="row">
-      <h2 class="grow">Scores <span class="muted small">${fmt.number(pagination.total_count)} match</span></h2>
+      <h2 class="grow">Scores <span class="muted small">${fmt.number(pagination.total_count)} ${pagination.total_count === 1 ? "score" : "scores"}</span></h2>
     </div>
     ${scores.length === 0
       ? html`<p class="muted">No scores match these filters.</p>`

@@ -40,6 +40,7 @@ const MIGRATION_LOCK = 7_301_442;
 const MIGRATION_HOOKS: Record<string, (tx: Db) => Promise<void>> = {
   "009_ez_multiplier_default.sql": async (tx) => (await import("../matches/store.ts")).recomputeEzMatches(tx),
   "010_match_game_results.sql": async (tx) => (await import("../matches/store.ts")).recomputeAllMatches(tx),
+  "013_qualifiers_no_result.sql": async (tx) => (await import("../matches/store.ts")).recomputeQualifierMatches(tx),
 };
 
 /** Apply every migration in `db/migrations/` that hasn't run yet, in filename order. */
