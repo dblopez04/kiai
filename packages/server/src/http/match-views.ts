@@ -21,7 +21,9 @@ import {
 } from "../matches/query.ts";
 import type { QueueOverview } from "../matches/queue.ts";
 import type { Player } from "../player.ts";
+import type { RatingsOverview } from "../ratings/service.ts";
 import type { BeatmapView } from "../scores/query.ts";
+import { ratingsPanel } from "./rating-views.ts";
 import { checked, filterForm, fmt, layout, modChips, numberValue, rankClass, rankLabel } from "./views.ts";
 
 type Html = ReturnType<typeof html>;
@@ -227,6 +229,7 @@ export interface MatchesPageData {
   filters: MatchFilters;
   page: MatchPage;
   stats: MatchStats;
+  ratings: RatingsOverview;
   queue: QueueOverview;
   discovery: DiscoveryState[];
   discoveryEnabled: boolean;
@@ -239,6 +242,7 @@ export function matchesPage(d: MatchesPageData): Html {
     "Matches",
     html`${d.notice ? html`<p class="notice" role="status">${d.notice}</p>` : ""}
       ${statsPanel(d.stats)}
+      ${ratingsPanel(d.ratings)}
       <div class="grid2">${importPanel(d.queue)}${discoveryPanel(d.discovery, d.discoveryEnabled, d.osuConfigured)}</div>
       ${matchFilterForm(d.filters)}
       ${matchTable(d.filters, d.page)}`,

@@ -10,6 +10,7 @@ import { errorMessage, UserError } from "../errors.ts";
 import type { OsuClient } from "../osu/api.ts";
 import type { MediaPaths } from "../media.ts";
 import type { Player } from "../player.ts";
+import type { RatingsService } from "../ratings/service.ts";
 import { scoreCsv } from "../scores/csv.ts";
 import { getScore, listScores, parseScoreFilters, scoreStats } from "../scores/query.ts";
 import { SYNC_MODES, type SyncMode } from "../sync/checkpoint.ts";
@@ -26,7 +27,10 @@ export interface AppDeps {
   player: Player;
   /** Where uploaded replays, videos and beatmaps live. */
   media: MediaPaths;
-  config: Pick<Config, "RECENT_WINDOW_HOURS" | "PRIVATE_HOSTS" | "UPLOAD_TOKEN" | "PUBLIC_URL"> & Partial<Pick<Config, "MATCH_DISCOVERY">>;
+  config: Pick<Config, "RECENT_WINDOW_HOURS" | "PRIVATE_HOSTS" | "UPLOAD_TOKEN" | "PUBLIC_URL"> &
+    Partial<Pick<Config, "MATCH_DISCOVERY" | "OTR_API_KEY" | "SKILLISSUE_SOURCE">>;
+  /** o!TR and Skill Issue ratings. Built from the config when not given (tests pass one with a fake fetch). */
+  ratings?: RatingsService;
 }
 
 const ASSETS: Record<string, { type: string; body: string }> = {

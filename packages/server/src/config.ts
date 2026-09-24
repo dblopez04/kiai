@@ -34,6 +34,10 @@ const envSchema = z.object({
   BACKFILL_ZERO_PP_ON_SYNC: flag.default(false),
   /** Crawl osu!'s lobby and ranked play lists for new matches the player played in. */
   MATCH_DISCOVERY: flag.default(true),
+  /** o!TR (otr.stagec.net) API key, for your tournament rating on the matches page: Settings → API keys there. */
+  OTR_API_KEY: z.string().trim().min(1).optional(),
+  /** Skill Issue's API only answers allowed callers: ask its author, JustRoxy, on the Skill Issue Discord for a source key. */
+  SKILLISSUE_SOURCE: z.string().trim().min(1).optional(),
 
   // ---------- replays and rendering ----------
 

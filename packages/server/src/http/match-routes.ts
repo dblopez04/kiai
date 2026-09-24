@@ -16,12 +16,15 @@ import {
 } from "../matches/query.ts";
 import { clearFailed, enqueueMatches, queueOverview, retryFailed } from "../matches/queue.ts";
 import { updateMatchSettings } from "../matches/store.ts";
+import { createRatingsService } from "../ratings/service.ts";
 import type { AppDeps } from "./app.ts";
 import { matchesPage, matchPage, tournamentScoresPage } from "./match-views.ts";
 import { messagePage } from "./views.ts";
 
 const PRIVATE = { "Cache-Control": "private, no-store" };
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+/** How long the matches page waits for stale ratings before showing the cached ones. */
+const RATINGS_WAIT_MS = 1500;
 
 function positiveId(value: string | undefined): number | null {
   if (!value || !/^\d+$/.test(value)) return null;
@@ -51,6 +54,9 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
   const requireOsu = () => {
     if (!deps.osu) throw new UserError("Fetching matches needs OSU_CLIENT_ID and OSU_CLIENT_SECRET to be configured.");
   };
+  const ratings =
+    deps.ratings ??
+    createRatingsService({ sql, playerId: player.id, otrApiKey: deps.config.OTR_API_KEY, skillIssueSource: deps.config.SKILLISSUE_SOURCE });
   const back = (notice: string, to = "/matches") => `${to}${to.includes("?") ? "&" : "?"}notice=${encodeURIComponent(notice)}`;
 
   async function importText(text: string) {
@@ -63,11 +69,13 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
 
   app.get("/matches", async (c) => {
     const filters = parseMatchFilters(new URL(c.req.url).searchParams);
-    const [page, stats, queue, discovery] = await Promise.all([
+    await ratings.refreshStale(RATINGS_WAIT_MS);
+    const [page, stats, queue, discovery, ratingsOverview] = await Promise.all([
       listMatches(sql, player.id, filters),
       matchStats(sql, player.id),
       queueOverview(sql),
       discoveryState(sql),
+      ratings.read(),
     ]);
     return c.html(
       matchesPage({
@@ -75,6 +83,7 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
         filters,
         page,
         stats,
+        ratings: ratingsOverview,
         queue,
         discovery,
         discoveryEnabled: deps.config.MATCH_DISCOVERY ?? true,
@@ -155,6 +164,13 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
     return c.redirect(back("Queued to be fetched again.", `/matches/${id}`), 303);
   });
 
+  app.post("/matches/ratings/refresh", async (c) => {
+    await ratings.refresh();
+    const { otr, skillissue } = await ratings.read();
+    const failed = [otr, skillissue].filter((p) => p.configured && p.error).length;
+    return c.redirect(back(failed ? "Couldn't update every rating; see the ratings card." : "Ratings updated."), 303);
+  });
+
   app.post("/matches/queue/retry", async (c) => c.redirect(back(`Retrying ${await retryFailed(sql)} matches.`), 303));
   app.post("/matches/queue/clear", async (c) => c.redirect(back(`Forgot ${await clearFailed(sql)} matches.`), 303));
 
@@ -177,6 +193,7 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
   // ---------- JSON API ----------
 
   app.get("/api/matches", async (c) => c.json(await listMatches(sql, player.id, parseMatchFilters(new URL(c.req.url).searchParams)), 200, PRIVATE));
+  app.get("/api/matches/ratings", async (c) => c.json(await ratings.read(), 200, PRIVATE));
   app.get("/api/matches/stats", async (c) => c.json(await matchStats(sql, player.id), 200, PRIVATE));
   app.get("/api/matches/queue", async (c) => c.json({ queue: await queueOverview(sql), discovery: await discoveryState(sql) }, 200, PRIVATE));
   app.get("/api/matches/scores", async (c) =>

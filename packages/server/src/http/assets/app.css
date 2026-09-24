@@ -101,6 +101,11 @@ details.danger summary { color: var(--alert); }
 .stat { display: grid; gap: 0.1rem; align-content: start; }
 .stat .label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .stat strong, .stat > a { font-size: 1.35rem; font-weight: 700; }
+.stat .up { color: var(--win); }
+.stat .down { color: var(--alert); }
+.rating-source h3 { margin: 0 0 0.6rem; }
+.rating-source .stats { grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); }
+.rating-source details { margin-top: 0.8rem; }
 .dist { grid-column: 1 / -1; display: flex; gap: 2px; border-radius: 6px; overflow: hidden; font-size: 0.8rem; }
 .dist span { padding: 0.25rem 0.5rem; white-space: nowrap; overflow: hidden; background: var(--bg); border-radius: 0; }
 

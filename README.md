@@ -188,6 +188,14 @@ match has every map played and every player's score.
   (**Against**), result, source, match cost, maps played and date. Sort by date, match cost,
   maps, average score, accuracy or name. In a 1v1 the other player is your opponent. In a
   qualifier or free-for-all lobby, everyone else counts as an opponent.
+- **Tournament ratings:** the page shows your osu!standard ratings from
+  [o!TR](https://otr.stagec.net) (rating and tier, global and country rank, change over 30 days,
+  verified tournaments) and the Skill Issue bot (SIP, expected star rating, ranks, and the
+  rating for each mod and skillset). Each needs a key in `.env`. For o!TR, sign in there and
+  create one under Settings → API keys, then set `OTR_API_KEY`. Skill Issue's API only answers
+  callers its author allows, so ask JustRoxy on the Skill Issue Discord for a source key and set
+  `SKILLISSUE_SOURCE`. Ratings are cached and refetched every 6 hours when the page is opened,
+  or with **Refresh**.
 - **Tournament scores** searches every score in saved matches with the score library's filters
   (mods, PP, stars, speed, rank, best per map...), plus player (you, anyone, or `all`), match
   name and source. NoFail is ignored in mod filters, since tournaments force it, so NM means
