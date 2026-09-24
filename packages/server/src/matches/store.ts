@@ -241,6 +241,12 @@ export interface MatchSettings {
   ezMultiplier: number;
 }
 
+/** Mark a tournament-style lobby as casual (or undo it). Returns false if the match doesn't exist. */
+export async function setNotTournament(sql: Sql, matchId: number, notTournament: boolean): Promise<boolean> {
+  const updated = await sql`update matches set not_tournament = ${notTournament} where id = ${matchId} returning id`;
+  return updated.length > 0;
+}
+
 export async function updateMatchSettings(sql: Sql, matchId: number, settings: MatchSettings): Promise<boolean> {
   return sql.begin(async (tx) => {
     const updated = await tx`

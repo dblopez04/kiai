@@ -264,9 +264,10 @@ export function matchmakingBot(name: string): MatchmakingBot | null {
 export const MATCH_KINDS = ["tournament", "romai", "etx", "omm", "ranked"] as const;
 export type MatchKind = (typeof MATCH_KINDS)[number] | "other";
 
-export function matchKind(match: { source: MatchSource; name: string; acronym: string | null }): MatchKind {
+/** `notTournament`: the player marked a tournament-style name as a casual lobby. */
+export function matchKind(match: { source: MatchSource; name: string; acronym: string | null; notTournament?: boolean }): MatchKind {
   if (match.source === "lazer") return "ranked";
-  return matchmakingBot(match.name) ?? (match.acronym !== null ? "tournament" : "other");
+  return matchmakingBot(match.name) ?? (match.acronym !== null && !match.notTournament ? "tournament" : "other");
 }
 
 /** Lobby names worth fetching during discovery: tournament-style names, or ones naming the player. */
