@@ -93,7 +93,7 @@ export function layout(title: string, body: Html, player: Player): Html {
 </head>
 <body>
 <header class="topbar">
-  <nav class="sections"><a class="brand" href="/">kiai</a><a href="/">Scores</a><a href="/matches">Matches</a><a href="/matches/scores">Tournament scores</a><a href="/replays">Replays</a><a href="/render">Render settings</a></nav>
+  <nav class="sections"><a class="brand" href="/">kiai</a><a href="/">Scores</a><a href="/matches">Matches</a><a href="/matches/stats">Match stats</a><a href="/matches/scores">Tournament scores</a><a href="/replays">Replays</a><a href="/render">Render settings</a></nav>
   <nav><a class="who" href="https://osu.ppy.sh/users/${player.id}" target="_blank" rel="noopener noreferrer">${player.username}</a></nav>
 </header>
 <main>${body}</main>

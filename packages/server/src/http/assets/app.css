@@ -200,6 +200,24 @@ tr.row-blue td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
 .gamehead img { border-radius: 6px; object-fit: cover; }
 .discovery { border-top: 1px solid var(--line); padding-top: 0.6rem; margin-top: 0.6rem; }
 .discovery p { margin: 0.3rem 0; }
+.records { display: grid; gap: 0.8rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); }
+.record { display: grid; gap: 0.1rem; align-content: start; min-width: 0; border-left: 3px solid var(--accent); padding-left: 0.6rem; }
+.record .label, .ranklist h3 { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.record strong { font-size: 1.2rem; }
+.record .clip, .ranklist .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ranklists { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); margin-bottom: 1rem; }
+.ranklist h3 { margin: 0; }
+.ranklist p { margin: 0.1rem 0 0.4rem; }
+.ranklist ol { margin: 0; padding-left: 1.3rem; display: grid; gap: 0.2rem; }
+.ranklist li > * { vertical-align: baseline; }
+.ranklist li { font-variant-numeric: tabular-nums; }
+.ranklist li .grow { display: inline-block; max-width: 60%; vertical-align: bottom; }
+svg.bars { display: block; width: 100%; height: 8rem; }
+svg.bars .bar { fill: var(--accent); }
+svg.bars .hit { fill: transparent; }
+svg.bars g:hover .bar { fill: color-mix(in srgb, var(--accent) 75%, var(--text)); }
+svg.bars g:hover .hit { fill: color-mix(in srgb, var(--accent) 8%, transparent); }
+svg.bars .baseline { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
 
 @media (max-width: 640px) {
   main { padding: 0.6rem; }
