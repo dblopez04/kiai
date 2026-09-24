@@ -22,7 +22,7 @@ import {
 import type { QueueOverview } from "../matches/queue.ts";
 import type { Player } from "../player.ts";
 import type { BeatmapView } from "../scores/query.ts";
-import { checked, filterForm, fmt, layout, modChips, numberValue, rankClass, rankLabel } from "./views.ts";
+import { checked, filterForm, fmt, layout, mapCell, modChips, numberValue, rankClass, rankLabel } from "./views.ts";
 
 type Html = ReturnType<typeof html>;
 
@@ -53,6 +53,11 @@ function resultChip(result: MatchListItem["result"]): Html | string {
 function scoreLine(m: Pick<MatchListItem, "red_wins" | "blue_wins" | "me">): string {
   if (m.red_wins === null || m.blue_wins === null) return "";
   return m.me?.side === "blue" ? `${m.blue_wins}–${m.red_wins}` : `${m.red_wins}–${m.blue_wins}`;
+}
+
+/** A one-line, clipped cell of player links; hovering shows every name. */
+function peopleCell(list: PlayerRef[]): Html {
+  return html`<td class="clip people" title="${list.map(who).join(", ")}">${people(list)}</td>`;
 }
 
 function people(list: PlayerRef[], max = 4): Html | string {
@@ -207,13 +212,13 @@ function matchTable(f: MatchFilters, page: MatchPage): Html {
           <tbody>${page.matches.map(
             (m) => html`<tr>
               <td class="nowrap">${fmt.date(m.start_time)}</td>
-              <td class="map"><a href="/matches/${m.id}">${m.name || `${SOURCE_LABEL[m.source]} #${m.external_id}`}</a>${m.source === "lazer" ? html` <span class="chip">ranked play</span>` : ""}</td>
+              <td class="clip match" title="${m.name}"><a href="/matches/${m.id}">${m.name || `${SOURCE_LABEL[m.source]} #${m.external_id}`}</a>${m.source === "lazer" ? html` <span class="chip">ranked play</span>` : ""}</td>
               <td class="nowrap">${resultChip(m.result)} ${scoreLine(m)}</td>
               <td class="r">${cost(m.me?.match_cost)}</td>
               <td class="r">${m.me ? html`${m.me.games_played}<span class="muted">/${m.games_count}</span>` : m.games_count}</td>
               <td class="r">${m.me ? fmt.acc(m.me.avg_accuracy) : "—"}</td>
-              <td>${m.me?.side ? people(m.teammates) : html`<span class="muted">—</span>`}</td>
-              <td>${people(m.opponents)}</td>
+              ${m.me?.side ? peopleCell(m.teammates) : html`<td class="clip people"><span class="muted">—</span></td>`}
+              ${peopleCell(m.opponents)}
               <td><a href="${m.url}" target="_blank" rel="noopener noreferrer" title="Open on osu!">↗</a></td>
             </tr>`,
           )}</tbody>
@@ -329,7 +334,7 @@ function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
               <td class="r">${fmt.number(s.countmiss)}</td>
               <td><span class="${rankClass(s.rank)}">${rankLabel(s.rank)}</span></td>
               <td>${modChips(s.mods)}</td>
-              <td class="r" title="${s.pp_source === "local" ? "Local estimate (rosu-pp, without NoFail)" : s.pp_source}">${fmt.pp(s.pp)}${s.pp_source === "local" ? html`<sup>*</sup>` : ""}</td>
+              <td class="r" title="${s.pp_source === "local" ? "Local estimate (rosu-pp, without NoFail)" : s.pp_source}">${fmt.pp(s.pp)}</td>
             </tr>`,
           )}</tbody>
         </table></div>`
@@ -360,8 +365,7 @@ export function matchPage(m: MatchDetail, player: Player, notice?: string): Html
       </form>
     </section>
     ${playersTable(m, player.id)}
-    ${m.games.map((g) => gameCard(g, m, player.id))}
-    ${m.games.some((g) => g.scores.some((s) => s.pp_source === "local")) ? html`<p class="muted small">* PP calculated locally with rosu-pp, without NoFail; osu! gives multiplayer scores none.</p>` : ""}`,
+    ${m.games.map((g) => gameCard(g, m, player.id))}`,
     player,
   );
 }
@@ -393,16 +397,16 @@ export function tournamentScoresPage(player: Player, f: TournamentScoreFilters, 
             <tbody>${page.scores.map(
               (s) => html`<tr>
                 <td><span class="${rankClass(s.rank)}">${rankLabel(s.rank)}</span></td>
-                <td class="map">${s.beatmap ? html`<a href="${s.beatmap.url}" target="_blank" rel="noopener noreferrer">${beatmapTitle(s.beatmap, s.beatmap_id)}</a> <span class="muted">[${s.beatmap.version ?? "?"}]</span>` : beatmapTitle(null, s.beatmap_id)}</td>
+                ${s.beatmap ? mapCell(s.beatmap, s.beatmap.url, true) : html`<td class="clip map">${beatmapTitle(null, s.beatmap_id)}</td>`}
                 <td>${modChips(s.mods)}</td>
-                <td class="r" title="${s.pp_source}">${fmt.pp(s.pp)}${s.pp_source === "local" ? html`<sup>*</sup>` : ""}</td>
+                <td class="r" title="${s.pp_source === "local" ? "Local estimate (rosu-pp, without NoFail)" : s.pp_source}">${fmt.pp(s.pp)}</td>
                 <td class="r">${fmt.acc(s.accuracy)}</td>
                 <td class="r">${fmt.number(s.total_score)}</td>
                 <td class="r">${fmt.number(s.max_combo)}${s.beatmap?.max_combo ? html`<span class="muted">/${fmt.number(s.beatmap.max_combo)}</span>` : ""}</td>
                 <td class="r">${fmt.number(s.countmiss)}</td>
                 <td class="r">${fmt.stars(s.beatmap?.difficulty_rating ?? null)}</td>
                 ${showPlayer ? html`<td>${s.username ?? `#${s.user_id}`}</td>` : ""}
-                <td><a href="/matches/${s.match_id}">${s.match_name || "match"}</a> <span class="muted small">#${s.game_position}</span></td>
+                <td class="clip match" title="${s.match_name ? `${s.match_name} · map ${s.game_position}` : ""}"><span class="muted small">#${s.game_position}</span> <a href="/matches/${s.match_id}">${s.match_name || "match"}</a></td>
                 <td class="nowrap">${fmt.date(s.ended_at)}</td>
               </tr>`,
             )}</tbody>

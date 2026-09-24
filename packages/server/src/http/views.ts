@@ -2,7 +2,7 @@
 
 import { html } from "hono/html";
 import { MOD_CATEGORIES, STANDARD_MODS, modDescription, modLabel, modSettingLabels, type ScoreMod } from "../scores/mods.ts";
-import { filtersToParams, SORT_KEYS, type ScoreFilters, type ScorePage, type ScoreStats, type ScoreView } from "../scores/query.ts";
+import { filtersToParams, SORT_KEYS, type BeatmapView, type ScoreFilters, type ScorePage, type ScoreStats, type ScoreView } from "../scores/query.ts";
 import type { SyncOverview, SyncRun } from "../sync/queue.ts";
 import type { Player } from "../player.ts";
 import type { RenderPreset } from "../render/presets.ts";
@@ -34,6 +34,14 @@ export const rankLabel = (rank: string) => RANK_LABEL[rank] ?? rank;
 export const rankClass = (rank: string) => `rank rank-${rank.toLowerCase()}`;
 
 const mapTitle = (s: ScoreView) => `${s.beatmap.artist ?? "Unknown artist"} - ${s.beatmap.title ?? "Unknown title"}`;
+
+/** A one-line table cell for a beatmap: title [version] artist, clipped, with the full name on hover. */
+export function mapCell(b: Pick<BeatmapView, "artist" | "title" | "version">, href: string, external = false): Html {
+  const title = b.title ?? "Unknown title";
+  const artist = b.artist ?? "Unknown artist";
+  const version = b.version ?? "?";
+  return html`<td class="clip map" title="${artist} - ${title} [${version}]"><a href="${href}" ${external ? html`target="_blank" rel="noopener noreferrer"` : ""}>${title}</a> <span class="muted">[${version}]</span> <span class="muted small">${artist}</span></td>`;
+}
 
 // ---------- layout ----------
 
@@ -259,9 +267,9 @@ function scoreTable(f: ScoreFilters, page: ScorePage): Html {
           <tbody>${scores.map(
             (s) => html`<tr>
               <td><span class="${rankClass(s.rank)}">${rankLabel(s.rank)}</span></td>
-              <td class="map"><a href="/scores/${s.id}">${mapTitle(s)}</a> <span class="muted">[${s.beatmap.version ?? "?"}]</span></td>
+              ${mapCell(s.beatmap, `/scores/${s.id}`)}
               <td>${modChips(s.mods)}</td>
-              <td class="r" title="${s.pp_source === "local" ? `Local estimate (${s.pp_calculator ?? "rosu-pp"})` : s.pp_source}">${fmt.pp(s.pp)}${s.pp_source === "local" ? html`<sup>*</sup>` : ""}</td>
+              <td class="r" title="${s.pp_source === "local" ? `Local estimate (${s.pp_calculator ?? "rosu-pp"})` : s.pp_source}">${fmt.pp(s.pp)}</td>
               <td class="r">${fmt.acc(s.accuracy)}</td>
               <td class="r">${fmt.number(s.max_combo)}${s.beatmap.max_combo ? html`<span class="muted">/${fmt.number(s.beatmap.max_combo)}</span>` : ""}</td>
               <td class="r">${fmt.number(s.countmiss)}</td>
@@ -269,8 +277,7 @@ function scoreTable(f: ScoreFilters, page: ScorePage): Html {
               <td class="nowrap">${fmt.date(s.ended_at)}</td>
             </tr>`,
           )}</tbody>
-        </table></div>
-        ${scores.some((s) => s.pp_source === "local") ? html`<p class="muted small">* PP calculated locally (loved, unranked or no longer on osu!).</p>` : ""}`}
+        </table></div>`}
     ${pagination.total_pages > 1
       ? html`<nav class="pager">
           ${pagination.page > 1 ? html`<a href="${link(pagination.page - 1)}">← Previous</a>` : html`<span></span>`}
