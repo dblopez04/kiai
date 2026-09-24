@@ -447,6 +447,18 @@ export interface MatchDetail extends Omit<MatchListItem, "teammates" | "opponent
   games: MatchGameView[];
 }
 
+function winningSide(red: number | null, blue: number | null): Side | null {
+  if (red === null || blue === null || red === blue) return null;
+  return red > blue ? "red" : "blue";
+}
+
+/** Moves the winner's side to the top, then the loser's, then anyone without a side; the order within each is kept. */
+function winnerFirst<T>(rows: T[], sideOf: (row: T) => Side | null, winner: Side | null): T[] {
+  if (!winner) return rows;
+  const rank = (row: T) => (sideOf(row) === winner ? 0 : sideOf(row) ? 1 : 2);
+  return [...rows].sort((a, b) => rank(a) - rank(b));
+}
+
 export async function getMatchDetail(sql: Sql, playerId: number, matchId: number): Promise<MatchDetail | null> {
   const [row] = await sql`${MATCH_SELECT(sql, playerId)} where m.id = ${matchId}`;
   if (!row) return null;
@@ -472,9 +484,32 @@ export async function getMatchDetail(sql: Sql, playerId: number, matchId: number
     fetched_at: iso(row.fetched_at),
     added_via: row.added_via,
     tiebreaker: analyzed?.analysis.tiebreaker ?? false,
-    players,
+    players: winnerFirst(players, (p) => p.side, winningSide(item.red_wins, item.blue_wins)),
     games: games.map((g) => {
       const result = results.get(g.id);
+      const gameScores = scores
+        .filter((s) => s.game_id === g.id)
+        .map((s) => ({
+          id: s.id,
+          user_id: s.user_id,
+          username: s.username,
+          team: s.team,
+          side: sides.get(s.user_id) ?? null,
+          slot: s.slot,
+          total_score: s.total_score,
+          accuracy: s.accuracy,
+          max_combo: s.max_combo,
+          perfect: s.perfect,
+          passed: s.passed,
+          rank: s.rank,
+          count300: s.count300,
+          count100: s.count100,
+          count50: s.count50,
+          countmiss: s.countmiss,
+          mods: normalizeMods(s.mods),
+          pp: s.pp,
+          pp_source: s.pp_source,
+        }));
       return {
         id: g.id,
         position: g.position,
@@ -490,29 +525,7 @@ export async function getMatchDetail(sql: Sql, playerId: number, matchId: number
         winner: result?.winner ?? null,
         red_score: result?.redScore ?? null,
         blue_score: result?.blueScore ?? null,
-        scores: scores
-          .filter((s) => s.game_id === g.id)
-          .map((s) => ({
-            id: s.id,
-            user_id: s.user_id,
-            username: s.username,
-            team: s.team,
-            side: sides.get(s.user_id) ?? null,
-            slot: s.slot,
-            total_score: s.total_score,
-            accuracy: s.accuracy,
-            max_combo: s.max_combo,
-            perfect: s.perfect,
-            passed: s.passed,
-            rank: s.rank,
-            count300: s.count300,
-            count100: s.count100,
-            count50: s.count50,
-            countmiss: s.countmiss,
-            mods: normalizeMods(s.mods),
-            pp: s.pp,
-            pp_source: s.pp_source,
-          })),
+        scores: winnerFirst(gameScores, (s) => s.side, result?.winner ?? null),
       };
     }),
   };

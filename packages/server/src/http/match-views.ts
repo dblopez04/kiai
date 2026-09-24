@@ -256,6 +256,11 @@ function sideChip(side: string | null): Html | string {
   return side === "red" || side === "blue" ? html`<span class="chip side-${side}">${side}</span>` : "";
 }
 
+/** The two sides with the one ahead first, red first on a tie. */
+function winnerFirst(red: number, blue: number): ["red", "blue"] | ["blue", "red"] {
+  return blue > red ? ["blue", "red"] : ["red", "blue"];
+}
+
 function headline(m: MatchDetail): Html | string {
   if (m.red_wins === null || m.blue_wins === null) return "";
   const names = (side: "red" | "blue") => {
@@ -263,7 +268,9 @@ function headline(m: MatchDetail): Html | string {
     if (m.format === "team") return fromName ?? side;
     return m.players.filter((p) => p.side === side).map(who).join(", ") || fromName || side;
   };
-  return html`<p class="scoreline"><span class="side-red">${names("red")}</span> <strong>${m.red_wins} – ${m.blue_wins}</strong> <span class="side-blue">${names("blue")}</span></p>`;
+  const [a, b] = winnerFirst(m.red_wins, m.blue_wins);
+  const wins = { red: m.red_wins, blue: m.blue_wins };
+  return html`<p class="scoreline"><span class="side-${a}">${names(a)}</span> <strong>${wins[a]} – ${wins[b]}</strong> <span class="side-${b}">${names(b)}</span></p>`;
 }
 
 function playersTable(m: MatchDetail, playerId: number): Html {
@@ -300,6 +307,12 @@ function playersTable(m: MatchDetail, playerId: number): Html {
   </section>`;
 }
 
+function mapTotals(red: number, blue: number): Html {
+  const [a, b] = winnerFirst(red, blue);
+  const totals = { red, blue };
+  return html`<span class="muted small"><span class="side-${a}">${fmt.number(totals[a])}</span> – <span class="side-${b}">${fmt.number(totals[b])}</span></span>`;
+}
+
 function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
   const b = g.beatmap;
   const status = !g.end_time
@@ -311,7 +324,7 @@ function gameCard(g: MatchGameView, m: MatchDetail, playerId: number): Html {
         : "";
   const totals =
     g.red_score !== null && g.blue_score !== null && m.format !== "ffa"
-      ? html`<span class="muted small"><span class="side-red">${fmt.number(g.red_score)}</span> – <span class="side-blue">${fmt.number(g.blue_score)}</span></span>`
+      ? mapTotals(g.red_score, g.blue_score)
       : "";
   return html`<section class="card game" aria-label="Map ${g.position}">
     <div class="gamehead">

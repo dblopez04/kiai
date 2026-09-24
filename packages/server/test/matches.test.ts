@@ -178,6 +178,9 @@ describe("saving matches", () => {
     expect(detail.games.map((g) => g.winner)).toEqual(["red", "blue", "red", "blue", "red"]);
     expect(detail.me!.match_cost).toBeCloseTo(2.750238, 5);
     expect(detail.players.map((p) => p.side)).toEqual(["red", "red", "blue", "blue"]);
+    expect(detail.games.map((g) => g.scores.map((s) => s.side))).toEqual(
+      detail.games.map((g) => (g.winner === "blue" ? ["blue", "blue", "red", "red"] : ["red", "red", "blue", "blue"])),
+    );
     const myScores = detail.games.flatMap((g) => g.scores.filter((s) => s.user_id === USER_ID));
     expect(myScores.every((s) => s.pp_source === "local" && s.pp! > 0)).toBe(true);
     expect(detail.players.find((p) => p.user_id === OPPONENT_A)!.username).toBe("RivalOne");
