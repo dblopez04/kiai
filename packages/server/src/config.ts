@@ -34,6 +34,51 @@ const envSchema = z.object({
   BACKFILL_ZERO_PP_ON_SYNC: flag.default(false),
   /** Crawl osu!'s lobby and ranked play lists for new matches the player played in. */
   MATCH_DISCOVERY: flag.default(true),
+
+  // ---------- replays and rendering ----------
+
+  /** Uploaded replays, rendered videos and the beatmaps and skins danser reads. */
+  DATA_DIR: z.string().default("data"),
+  /** Clients send this as a bearer token to upload replays and beatmaps. Uploads are refused until it's set. */
+  UPLOAD_TOKEN: z.string().trim().min(16, "use at least 16 characters, e.g. the output of `openssl rand -hex 24`").optional(),
+  /** Beatmap set download URLs, tried in order; `{set}` is replaced by the beatmapset id. */
+  MAP_MIRRORS: z
+    .string()
+    .default("https://catboy.best/d/{set},https://api.nerinyan.moe/d/{set},https://osu.direct/api/d/{set}")
+    .transform((value) => value.split(",").map((url) => url.trim()).filter(Boolean))
+    .refine((urls) => urls.every((url) => /^https?:\/\//.test(url) && url.includes("{set}")), "each entry must be an http(s) URL containing {set}"),
+  /** Where danser 0.11 (`danser-cli`, its libraries and bundled ffmpeg) is unpacked. It keeps its settings and database there too. */
+  DANSER_DIR: z.string().default("/opt/danser"),
+  /** ffmpeg encoder for renders. h264_nvenc suits NVIDIA GPUs from Pascal on; libx264 needs no GPU. */
+  RENDER_ENCODER: z
+    .enum(["h264_nvenc", "hevc_nvenc", "av1_nvenc", "h264_qsv", "hevc_qsv", "h264_amf", "hevc_amf", "av1_amf", "libx264", "libx265", "libsvtav1"])
+    .default("h264_nvenc"),
+  /** Renders run at once by this worker. danser shares one database per install, so keep 1 unless you know it copes. */
+  RENDER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(1),
+  /** A render still running after this long is stopped and failed. */
+  RENDER_TIMEOUT_MINUTES: z.coerce.number().positive().default(60),
+  /** Run danser under xvfb-run, since it needs an X display even when recording. */
+  RENDER_XVFB: flag.default(true),
+
+  // ---------- public replay pages and notifications ----------
+
+  /** The public replay app's address as viewers see it, e.g. https://replays.example.com. Used in links and embeds. */
+  PUBLIC_URL: z
+    .string()
+    .trim()
+    .regex(/^https?:\/\/[^/?#\s]+$/, "expected an address such as https://replays.example.com, without a path")
+    .optional(),
+  /** Port of the public replay app (`server public`). Only this port is ever routed to the tunnel. */
+  PUBLIC_PORT: z.coerce.number().int().min(1).max(65535).default(8081),
+  /** Discord: a DM from a bot that shares a server with you (both needed)... */
+  DISCORD_BOT_TOKEN: z.string().trim().min(1).optional(),
+  DISCORD_USER_ID: z.string().trim().regex(/^\d{15,22}$/, "expected your Discord user id (Developer Mode → Copy User ID)").optional(),
+  /** ...or a webhook into a (private) channel. */
+  DISCORD_WEBHOOK_URL: z
+    .string()
+    .trim()
+    .regex(/^https:\/\/(discord\.com|discordapp\.com|canary\.discord\.com)\/api\/webhooks\/\d+\/[\w-]+$/, "expected a Discord webhook URL")
+    .optional(),
 });
 
 export type Config = z.infer<typeof envSchema>;

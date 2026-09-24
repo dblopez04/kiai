@@ -141,6 +141,16 @@ table.kv td { padding: 0.25rem 0; }
 .coverinner { display: flex; gap: 1.2rem; align-items: center; padding: 1.5rem; background: linear-gradient(90deg, color-mix(in srgb, var(--card) 95%, transparent), color-mix(in srgb, var(--card) 70%, transparent)); }
 .coverinner p { margin: 0.3rem 0 0; }
 
+video.video { width: 100%; max-height: 75vh; background: #000; border-radius: 6px; }
+pre { white-space: pre-wrap; word-break: break-word; }
+ol.rules { padding-left: 1.4rem; display: grid; gap: 0.4rem; }
+ul.plain { list-style: none; padding: 0; display: grid; gap: 0.3rem; }
+.stack textarea { justify-self: stretch; }
+.replaylist { display: grid; gap: 0.6rem; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); }
+.replaycard { display: flex; gap: 0.8rem; align-items: center; text-decoration: none; color: var(--text); padding: 0.6rem; }
+.replaycard:hover { border-color: var(--accent); }
+.replaycard img { width: 6rem; height: 4.2rem; object-fit: cover; border-radius: 6px; flex: none; }
+textarea.code { font: 0.9em/1.4 ui-monospace, monospace; }
 .topbar nav.sections { gap: 1.2rem; flex-wrap: wrap; }
 .topbar nav.sections a:not(.brand) { color: var(--muted); text-decoration: none; }
 .topbar nav.sections a:not(.brand):hover { color: var(--accent); }

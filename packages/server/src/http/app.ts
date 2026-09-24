@@ -8,6 +8,7 @@ import type { Config } from "../config.ts";
 import type { Sql } from "../db/index.ts";
 import { errorMessage, UserError } from "../errors.ts";
 import type { OsuClient } from "../osu/api.ts";
+import type { MediaPaths } from "../media.ts";
 import type { Player } from "../player.ts";
 import { scoreCsv } from "../scores/csv.ts";
 import { getScore, listScores, parseScoreFilters, scoreStats } from "../scores/query.ts";
@@ -15,6 +16,7 @@ import { SYNC_MODES, type SyncMode } from "../sync/checkpoint.ts";
 import { enqueueSync, syncOverview } from "../sync/queue.ts";
 import { mountMatchRoutes } from "./match-routes.ts";
 import { checkPrivateRequest } from "./private.ts";
+import { registerReplayRoutes } from "./replays.ts";
 import { dashboardPage, messagePage, scorePage, syncStatus } from "./views.ts";
 
 export interface AppDeps {
@@ -22,7 +24,9 @@ export interface AppDeps {
   /** Null when osu! credentials aren't configured: browsing works, imports don't. */
   osu: OsuClient | null;
   player: Player;
-  config: Pick<Config, "RECENT_WINDOW_HOURS" | "PRIVATE_HOSTS"> & Partial<Pick<Config, "MATCH_DISCOVERY">>;
+  /** Where uploaded replays, videos and beatmaps live. */
+  media: MediaPaths;
+  config: Pick<Config, "RECENT_WINDOW_HOURS" | "PRIVATE_HOSTS" | "UPLOAD_TOKEN" | "PUBLIC_URL"> & Partial<Pick<Config, "MATCH_DISCOVERY">>;
 }
 
 const ASSETS: Record<string, { type: string; body: string }> = {
@@ -66,6 +70,8 @@ export function createApp(deps: AppDeps): Hono {
     if (!asset) return c.notFound();
     return c.body(asset.body, 200, { "Content-Type": asset.type, "Cache-Control": "no-cache" });
   });
+
+  registerReplayRoutes(app, { sql, player, media: deps.media, uploadToken: deps.config.UPLOAD_TOKEN, publicUrl: deps.config.PUBLIC_URL });
 
   async function queue(mode: SyncMode, trigger: "manual" | "api", windowHours?: number) {
     if (!deps.osu) throw new UserError("Imports need OSU_CLIENT_ID and OSU_CLIENT_SECRET to be configured.");

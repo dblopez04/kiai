@@ -6,10 +6,14 @@
 later also a systemd user service.
 
 - Presets and `.desktop` entries (done).
-- Replay watcher (phase 3). osu! stable writes exported replays (F2) to `<osu path>/Replays/`,
-  and osu-winello records the osu! path in `~/.local/share/osuconfig/osupath`. lazer
-  writes exports to its `exports/` folder. The watcher uploads each new `.osr` with a
-  token and tags it with the server from `session.json`.
+- `kiai render <file.osr>` (done): uploads a replay, waits for the render, and uploads the map
+  from the local Songs folder when the server can't get it.
+- Replay watcher (done): `kiai watch`, installed as a systemd user unit by `kiai watch install`.
+  osu! stable writes exported replays (F2) to `<osu path>/Replays/`, and osu-winello records the
+  osu! path in `~/.local/share/osuconfig/osupath`. lazer writes exports to
+  `~/.local/share/osu/exports`. The watcher polls both every 3 s (a file is uploaded once its size
+  holds still), uploads each new `.osr` with the token, tags it with the server from
+  `session.json`, and follows the render, uploading the map when the server asks for it.
 
 **Server** (`packages/server`): docker compose on the homelab.
 
@@ -17,10 +21,10 @@ later also a systemd user service.
 |---|---|---|
 | `server` | Private score library UI + API on :8080, and the score sync worker (`serve` runs both; `web` / `worker` split them) | done |
 | `postgres` | Scores, metadata and the job queues | done |
-| `render` | danser + ffmpeg + Xvfb with the GPU passed through; takes render jobs | phase 3 |
-| public replay app | Replay pages and gallery only, on its own port (separate Hono app) | phase 4 |
-| `caddy` | Routes the public hostname to the replay app only; serves mp4s with range requests | phase 4 |
-| `cloudflared` | Tunnel, configured with a single `TUNNEL_TOKEN` | phase 4 |
+| `render` / `render-cpu` | danser + Xvfb (`render.Dockerfile`), compose profiles `nvidia` and `cpu`; runs `render-worker` | done |
+| `public` | The public replay app (`http/public.ts`, `server public`): replay pages and videos only, on :8081 | done |
+| `caddy` | Profile `tunnel`: proxies everything it gets to the public app (`deploy/Caddyfile`) | done |
+| `cloudflared` | Profile `tunnel`: Cloudflare Tunnel with a single `TUNNEL_TOKEN`, hostname → `http://caddy:80` | done |
 
 ### Public vs private
 
@@ -37,7 +41,7 @@ login, so it relies on never being reachable from outside:
 
   A misrouted tunnel fails closed, and DNS-rebinding and cross-site requests from your own
   browser are blocked.
-- The replay app will share the database but never mount the private routes (`http/app.ts`).
+- The replay app (`http/public.ts`) shares the database but never mounts the private routes (`http/app.ts`).
   It may reuse the filter module (`scores/query.ts`), but only for its own queries, which
   return rows that have a rendered replay.
 
@@ -94,6 +98,36 @@ Differences from the proof of concept:
 
 ## Render pipeline
 
+Phases 3–5 implement all six steps, plus the score link. Modules:
+
+| Module | |
+|---|---|
+| `replays/osr.ts` | .osr header parser: map MD5, player, hit counts, legacy mods (as lazer acronyms), date, online score id; stable's grade |
+| `replays/store.ts` | Saving uploads (deduplicated by SHA-256, random 10-character ids), replay views, `linkReplays` |
+| `render/maps.ts` | `beatmap_files` (every extracted .osu by MD5), safe .osz extraction (yauzl, no path escapes, size caps), mirror downloads, `ensureBeatmap` |
+| `render/queue.ts` | `render_jobs`: one unfinished job per replay, `for update skip locked` claims so several slots can run, leases with heartbeats, 3 attempts |
+| `render/danser.ts` | Runs `danser-cli` under `xvfb-run` in its own process group; progress from danser's log; timeout |
+| `replays/attributes.ts` | Step 3: the map with the replay's mods applied (rosu-pp), stored in `replays.attributes` |
+| `render/rules.ts` | Rule expressions (`HD and ar < 10.3`): parser, matcher, and the facts a replay offers |
+| `render/presets.ts` | `render_presets`, `render_rules` (ordered, first match wins, `default` otherwise), skins in `data/skins` |
+| `render/notify.ts` | Step 6: Discord bot DM or webhook, once per job |
+| `http/render-settings.ts` | The editor at `/render`: presets, rules, skins, dry run |
+| `http/public.ts` | The public replay app |
+| `render/worker.ts` | Claim → map → link → render → record; `needs_map` parks a job until its .osz is uploaded |
+| `http/replays.ts` | Upload API (bearer `UPLOAD_TOKEN`), replay JSON, video with byte ranges, private replay pages |
+
+What the code relies on from danser 0.11's source:
+- Settings live next to the binary (`settings/<name>.json`), and danser rewrites the file on load.
+  When the file is new, `-sPatch` is applied *after* the beatmap database is scanned. So the Songs
+  folder must be in a real settings file (`kiai.json`, written before every run), not the patch.
+- `-out <name>` writes `<Recording.OutputDir>/<name>.<Container>`, and `OutputDir` may be absolute.
+- When it can't find the map it logs `Beatmap not found, closing...` and exits 0. Success
+  therefore means "exit 0 and the video exists".
+- The release bundles its own ffmpeg 7 (with NVENC) in `ffmpeg/`. Its rpath is broken, so the
+  worker sets `LD_LIBRARY_PATH`.
+- Under Xvfb, GL runs on Mesa (llvmpipe, on the CPU); only encoding uses the GPU. If rendering is
+  too slow on the homelab, the next step is a headless Xorg with the NVIDIA driver instead of Xvfb.
+
 1. Upload `.osr` → parse the header: beatmap MD5, mods, player, and score stats.
 2. Find the map by MD5: osu! API v2 `beatmaps/lookup?checksum=` or a mirror, then download
    the `.osz`. If no mirror has it (unsubmitted or edited maps), the client uploads it.
@@ -137,11 +171,14 @@ Differences from the proof of concept:
 2. **Done:** private single-player score library (sync worker, search/filter, local PP, CSV,
    web UI, compose). Match database: Elitebotix import, discovery, Bathbot match costs,
    tournament score search.
-3. Render MVP: upload endpoint, map fetching, render container, one hard-coded preset;
-   `kiai render <file.osr>` by hand. Link each replay to its `scores` row when osu!
-   has the score, so the gallery can filter replays with `scores/query.ts`.
-4. Replay watcher (systemd user unit), Discord notification, the public replay app on its
-   own port, Caddy and cloudflared.
-5. Render presets and rules, skin uploads, editor UI.
+3. **Done:** render MVP: upload endpoint, map fetching, render container, one hard-coded
+   preset; `kiai render <file.osr>` by hand. Each replay is linked to its `scores` row when
+   osu! has the score, so the gallery can filter replays with `scores/query.ts`.
+4. **Done:** replay watcher (systemd user unit), Discord notification (bot DM or webhook),
+   the public replay app on its own port, Caddy and cloudflared. Replays also get their
+   mod-adjusted attributes (`replays/attributes.ts`, rosu-pp), step 3 of the pipeline.
+5. **Done:** render presets and rules (picked by the worker once the map's attributes are
+   known; jobs record the preset and why), skin uploads (editor and `kiai skin upload`), and
+   the editor UI with a dry run.
 6. Gallery with the score library's filters.
 7. Later: the skillset checker, once it settles in its own repo.

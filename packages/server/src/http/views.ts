@@ -5,6 +5,8 @@ import { MOD_CATEGORIES, STANDARD_MODS, modDescription, modLabel, modSettingLabe
 import { filtersToParams, SORT_KEYS, type ScoreFilters, type ScorePage, type ScoreStats, type ScoreView } from "../scores/query.ts";
 import type { SyncOverview, SyncRun } from "../sync/queue.ts";
 import type { Player } from "../player.ts";
+import type { RenderPreset } from "../render/presets.ts";
+import type { ReplayView } from "../replays/store.ts";
 
 type Html = ReturnType<typeof html>;
 
@@ -47,7 +49,7 @@ export function layout(title: string, body: Html, player: Player): Html {
 </head>
 <body>
 <header class="topbar">
-  <nav class="sections"><a class="brand" href="/">kiai</a><a href="/">Scores</a><a href="/matches">Matches</a><a href="/matches/scores">Tournament scores</a></nav>
+  <nav class="sections"><a class="brand" href="/">kiai</a><a href="/">Scores</a><a href="/matches">Matches</a><a href="/matches/scores">Tournament scores</a><a href="/replays">Replays</a><a href="/render">Render settings</a></nav>
   <nav><a class="who" href="https://osu.ppy.sh/users/${player.id}" target="_blank" rel="noopener noreferrer">${player.username}</a></nav>
 </header>
 <main>${body}</main>
@@ -357,6 +359,112 @@ export function scorePage(s: ScoreView, player: Player): Html {
         <p><a href="${b.url}" target="_blank" rel="noopener noreferrer">Beatmap on osu! ↗</a></p>
         ${s.mods.some((mod) => mod.settings && Object.keys(mod.settings).length)
           ? html`<h3>Mod settings</h3><ul>${s.mods.map((mod) => html`<li>${modDescription(mod)}</li>`)}</ul>`
+          : ""}
+      </section>
+    </div>`,
+    player,
+  );
+}
+
+// ---------- replays ----------
+
+const RENDER_STATUS: Record<string, string> = {
+  queued: "Queued",
+  running: "Rendering",
+  needs_map: "Needs the beatmap",
+  success: "Rendered",
+  failed: "Failed",
+};
+
+const replayTitle = (r: ReplayView) =>
+  r.beatmap ? `${r.beatmap.artist ?? "Unknown artist"} - ${r.beatmap.title ?? "Unknown title"}` : `Beatmap ${r.beatmap_md5.slice(0, 8)}…`;
+
+function renderState(r: ReplayView): Html {
+  const job = r.render;
+  if (!job) return html`<span class="muted">Not rendered</span>`;
+  const label = RENDER_STATUS[job.status] ?? job.status;
+  return job.status === "running" ? html`${label} ${job.progress}%` : job.status === "failed" || job.status === "needs_map" ? html`<span class="alert">${label}</span>` : html`${label}`;
+}
+
+export function replaysPage(replays: readonly ReplayView[], player: Player, notice?: string): Html {
+  const active = replays.some((r) => r.render && ["queued", "running"].includes(r.render.status));
+  return layout(
+    "Replays",
+    html`${notice ? html`<p class="notice" role="status">${notice}</p>` : ""}
+    <section class="card" aria-label="Replays">
+      <h2>Replays <span class="muted small">${fmt.number(replays.length)} most recent</span></h2>
+      ${replays.length === 0
+        ? html`<p>No replays yet. Upload one from the PC you play on with <code>kiai render &lt;file.osr&gt;</code>.</p>`
+        : html`<div class="tablewrap"><table class="scores">
+            <thead><tr><th>Rank</th><th>Beatmap</th><th>Mods</th><th class="r">Acc</th><th>Player</th><th>Server</th><th>Render</th><th>Uploaded</th></tr></thead>
+            <tbody>${replays.map(
+              (r) => html`<tr>
+                <td><span class="${rankClass(r.rank)}">${rankLabel(r.rank)}</span></td>
+                <td class="map"><a href="/replays/${r.id}">${replayTitle(r)}</a> ${r.beatmap?.version ? html`<span class="muted">[${r.beatmap.version}]</span>` : ""}</td>
+                <td>${modChips(r.mods)}</td>
+                <td class="r">${fmt.acc(r.accuracy)}</td>
+                <td>${r.player_name}</td>
+                <td>${r.devserver ?? "osu!"}</td>
+                <td class="nowrap">${renderState(r)}</td>
+                <td class="nowrap">${fmt.date(r.uploaded_at)}</td>
+              </tr>`,
+            )}</tbody>
+          </table></div>`}
+      ${active ? html`<p class="muted small">Renders in progress. Reload to see their status.</p>` : ""}
+    </section>`,
+    player,
+  );
+}
+
+export function replayPage(r: ReplayView, player: Player, publicUrl?: string, presets: readonly RenderPreset[] = []): Html {
+  const job = r.render;
+  const row = (label: string, value: unknown) => html`<tr><th>${label}</th><td>${value}</td></tr>`;
+  const canRetry = !job || job.status === "failed" || job.status === "needs_map" || job.status === "success";
+  return layout(
+    replayTitle(r),
+    html`<p><a href="/replays">← All replays</a></p>
+    <section class="card cover" ${r.beatmap?.cover_url ? html`style="background-image:url('${r.beatmap.cover_url}')"` : ""}>
+      <div class="coverinner">
+        <span class="${rankClass(r.rank)} big">${rankLabel(r.rank)}</span>
+        <div>
+          <h1>${r.beatmap?.title ?? replayTitle(r)}</h1>
+          <p>${r.beatmap?.artist ?? ""}${r.beatmap?.version ? html` · <strong>[${r.beatmap.version}]</strong>` : ""}${r.beatmap?.creator ? ` · mapped by ${r.beatmap.creator}` : ""}</p>
+          <p>${modChips(r.mods)}</p>
+        </div>
+      </div>
+    </section>
+    ${job?.video_url ? html`<section class="card"><video src="${job.video_url}" controls preload="metadata" class="video"></video></section>` : ""}
+    <div class="grid2">
+      <section class="card">
+        <h2>Play</h2>
+        <table class="kv">
+          ${row("Player", r.player_name)}
+          ${row("Server", r.devserver ?? "osu! (official)")}
+          ${row("Accuracy", fmt.acc(r.accuracy))}
+          ${row("Score", fmt.number(r.total_score))}
+          ${row("Combo", html`${fmt.number(r.max_combo)}${r.perfect ? html` <span class="badge">FC</span>` : ""}`)}
+          ${row("Hits", `${fmt.number(r.count300)} / ${fmt.number(r.count100)} / ${fmt.number(r.count50)} / ${fmt.number(r.countmiss)} miss`)}
+          ${row("Played", fmt.dateTime(r.played_at))}
+          ${row("In the score library", r.score_id ? html`<a href="/scores/${r.score_id}">yes</a>` : "not linked")}
+        </table>
+      </section>
+      <section class="card">
+        <h2>Render</h2>
+        <table class="kv">
+          ${row("Status", renderState(r))}
+          ${job ? row("Preset", job.preset ? html`${job.preset}${job.preset_reason ? html` <span class="muted small">(${job.preset_reason})</span>` : ""}` : "picked by the rules when it renders") : ""}
+          ${job?.finished_at ? row("Finished", fmt.dateTime(job.finished_at)) : ""}
+          ${job?.video_bytes ? row("Size", `${(job.video_bytes / 1024 / 1024).toFixed(1)} MB`) : ""}
+        </table>
+        ${job?.error ? html`<pre class="alert small">${job.error}</pre>` : ""}
+        ${job?.status === "needs_map" ? html`<p>Run <code>kiai render</code> on the PC you played on again: it uploads the map from your Songs folder.</p>` : ""}
+        ${job?.video_url ? html`<p><a href="${job.video_url}" download="${r.id}.mp4">Download video</a></p>` : ""}
+        ${job?.status === "success" && publicUrl ? html`<p>Public page: <a href="${publicUrl}/r/${r.id}" target="_blank" rel="noopener noreferrer">${publicUrl}/r/${r.id}</a></p>` : ""}
+        ${canRetry
+          ? html`<form method="post" action="/replays/${r.id}/render" class="row wrap">
+              <select name="preset" aria-label="Preset"><option value="">Preset: pick with the rules</option>${presets.map((p) => html`<option value="${p.name}">Preset: ${p.name}</option>`)}</select>
+              <button>${job ? "Render again" : "Render"}</button>
+            </form>`
           : ""}
       </section>
     </div>`,

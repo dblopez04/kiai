@@ -1,7 +1,9 @@
+import os from "node:os";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 import { createApp } from "../src/http/app.ts";
 import { fetchMatch, ingestMatch } from "../src/matches/store.ts";
+import { mediaPaths } from "../src/media.ts";
 import { resolvePlayer, type Player } from "../src/player.ts";
 import { createPpCalculator } from "../src/scores/pp.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
@@ -36,7 +38,7 @@ beforeEach(async () => {
   osu = fakeOsu();
   for (const id of [11, 12, 13, 14, 15]) osu.files.set(id, osuFile());
   player = await resolvePlayer(db.sql, osu, "tester");
-  app = createApp({ sql: db.sql, osu, player, config: { RECENT_WINDOW_HOURS: 24, PRIVATE_HOSTS: [] } });
+  app = createApp({ sql: db.sql, osu, player, media: mediaPaths(os.tmpdir()), config: { RECENT_WINDOW_HOURS: 24, PRIVATE_HOSTS: [] } });
   osu.matches.set(90001, teamMatch(90001));
   const fetched = await fetchMatch(osu, "stable", 90001);
   matchId = await ingestMatch(db.sql, fetched!, { addedVia: "import", pp: createPpCalculator((id) => osu.getBeatmapFile(id)) });

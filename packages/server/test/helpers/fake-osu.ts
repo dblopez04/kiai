@@ -59,6 +59,8 @@ export interface FakeOsu extends OsuClient {
   scoresOnMap: Map<number, ApiScore[]>;
   liveScores: Map<number, ApiScore>;
   files: Map<number, string>;
+  /** Beatmaps by .osu MD5, for lookupBeatmap. */
+  checksums: Map<string, ApiBeatmap>;
   /** Stable matches with all their events; `getMatch` pages them. */
   matches: Map<number, ApiMatch>;
   /** Stable matches that exist but are private. */
@@ -91,6 +93,7 @@ export function fakeOsu(): FakeOsu {
     scoresOnMap: new Map(),
     liveScores: new Map(),
     files: new Map(),
+    checksums: new Map(),
     matches: new Map(),
     privateMatches: new Set(),
     lobbies: [],
@@ -131,6 +134,11 @@ export function fakeOsu(): FakeOsu {
       fake.calls.push(`getBeatmapFile ${beatmapId}`);
       check("getBeatmapFile", beatmapId);
       return fake.files.get(beatmapId) ?? null;
+    },
+    async lookupBeatmap(checksum) {
+      fake.calls.push(`lookupBeatmap ${checksum}`);
+      check("lookupBeatmap", checksum);
+      return fake.checksums.get(checksum) ?? null;
     },
     async getMatch(matchId, after) {
       fake.calls.push(`getMatch ${matchId} ${after ?? ""}`.trim());

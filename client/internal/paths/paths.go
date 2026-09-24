@@ -24,6 +24,12 @@ type Paths struct {
 	WinelloIcon string
 	// osu-winello writes the osu! stable install path into this file.
 	WinelloOsuPathFile string
+	// Replays the watcher has already seen or uploaded.
+	WatchStateFile string
+	// lazer writes exported replays here (its default data folder on Linux).
+	LazerExportsDir string
+	// systemd user units, for the watcher service.
+	SystemdUserDir string
 }
 
 func Resolve(getenv Getenv) Paths {
@@ -55,6 +61,9 @@ func Resolve(getenv Getenv) Paths {
 		WinelloBinDir:      binDir,
 		WinelloIcon:        filepath.Join(dataHome, "icons", "osu-wine.png"),
 		WinelloOsuPathFile: filepath.Join(dataHome, "osuconfig", "osupath"),
+		WatchStateFile:     filepath.Join(stateHome, "kiai", "watch.json"),
+		LazerExportsDir:    filepath.Join(dataHome, "osu", "exports"),
+		SystemdUserDir:     filepath.Join(configHome, "systemd", "user"),
 	}
 }
 

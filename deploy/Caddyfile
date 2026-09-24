@@ -1,0 +1,33 @@
+# The public entry point. cloudflared forwards the tunnel's hostname here, and Caddy proxies to
+# the public replay app only (replay pages and their videos). The private score library
+# (server:8080) is never reachable from this file.
+{
+	admin off
+	# TLS ends at Cloudflare; the tunnel reaches Caddy over the compose network.
+	auto_https off
+	servers {
+		# Trust X-Forwarded-* only from cloudflared on the private compose network.
+		trusted_proxies static private_ranges
+	}
+}
+
+:80 {
+	# Pages compress well; videos don't, and byte ranges must pass through untouched.
+	@text header Content-Type text/*
+	encode @text gzip
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+	}
+
+	reverse_proxy public:8081 {
+		# Hide the tunnel's headers from the app; it's public anyway and needs nothing from them.
+		header_up -Cf-Access-Jwt-Assertion
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

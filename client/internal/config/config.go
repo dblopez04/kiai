@@ -4,6 +4,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -28,11 +29,25 @@ type Preset struct {
 	Keywords []string `json:"keywords"`
 }
 
+// Server is the kiai server on the homelab that renders replays.
+type Server struct {
+	// Base URL of the private app, e.g. http://homelab:8080.
+	URL string `json:"url"`
+	// The server's UPLOAD_TOKEN.
+	Token string `json:"token,omitempty"`
+}
+
 type Config struct {
 	Version int `json:"version"`
 	// Overrides where `osu-wine` is looked up.
-	OsuWinePath string   `json:"osuWinePath,omitempty"`
-	Presets     []Preset `json:"presets"`
+	OsuWinePath string `json:"osuWinePath,omitempty"`
+	// Overrides the osu! Songs folder searched for maps no mirror has (default: <osu! path>/Songs).
+	SongsDir string `json:"songsDir,omitempty"`
+	// Folders the replay watcher checks for new .osr files (default: osu! stable's Replays folder
+	// and lazer's exports folder).
+	WatchDirs []string `json:"watchDirs,omitempty"`
+	Server    *Server  `json:"server,omitempty"`
+	Presets   []Preset `json:"presets"`
 }
 
 func Empty() Config {
@@ -64,6 +79,15 @@ func (p Preset) Validate() error {
 	return nil
 }
 
+// ValidateServerURL accepts an http(s) base URL such as http://homelab:8080.
+func ValidateServerURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("expected the server's address, such as http://homelab:8080")
+	}
+	return nil
+}
+
 func Load(path string) (Config, error) {
 	data, ok, err := fsutil.ReadFileIfExists(path)
 	if err != nil {
@@ -89,6 +113,11 @@ func Load(path string) (Config, error) {
 		}
 		problems = append(problems, cfg.Presets[i].problems(fmt.Sprintf("presets.%d.", i))...)
 	}
+	if cfg.Server != nil {
+		if err := ValidateServerURL(cfg.Server.URL); err != nil {
+			problems = append(problems, "server.url: "+err.Error())
+		}
+	}
 	if len(problems) > 0 {
 		return Config{}, fmt.Errorf("%s is invalid:\n  %s", path, strings.Join(problems, "\n  "))
 	}
@@ -100,7 +129,8 @@ func Save(path string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	return fsutil.WriteFileAtomic(path, append(data, '\n'), 0o644)
+	// Owner-only: it can hold the server's upload token.
+	return fsutil.WriteFileAtomic(path, append(data, '\n'), 0o600)
 }
 
 // Index returns the position of the named preset, or -1.

@@ -8,6 +8,7 @@ import { runImport } from "../scores/importer.ts";
 import type { PpCalculator } from "../scores/pp.ts";
 import { backfillZeroPp, refreshScores } from "../scores/refresh.ts";
 import { saveProfile } from "../player.ts";
+import { linkReplays } from "../replays/store.ts";
 import { claimNextRun, resetLibrary, RunLease } from "./queue.ts";
 
 export interface WorkerDeps {
@@ -98,6 +99,10 @@ export async function runNextJob(deps: WorkerDeps, signal?: AbortSignal): Promis
       const backfill = await backfillZeroPp(sql, deps.pp, run.user_id);
       if (backfill.failed) throw new Error(`${backfill.failed} zero-PP recalculations failed. Resume the sync to retry.`);
     }
+
+    // Uploaded replays whose plays just arrived in the library get linked to them.
+    const linked = await linkReplays(sql, run.user_id);
+    if (linked) log(`linked ${linked} replay(s) to their scores`);
 
     assertActive();
     const csv = await writeCsvSnapshot(sql, deps.config.EXPORT_DIR, run.user_id, run.id);
