@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { migrate } from "../src/db/index.ts";
 import { analyzeMatch, type CostGame } from "../src/matches/cost.ts";
 import { crawlLazer, crawlStable, encodeCursor, scanStableFrom } from "../src/matches/discovery.ts";
 import { parseMatchRefs } from "../src/matches/import.ts";
@@ -196,6 +197,37 @@ describe("saving matches", () => {
     expect(detail.games[0]!.counted).toBe(false);
     expect([detail.red_wins, detail.blue_wins]).toEqual([2, 2]);
     expect(detail.me!.games_played).toBe(4);
+  });
+
+  describe("EZ multiplier", () => {
+    const ezMatch = (id: number) =>
+      stableMatch({
+        id,
+        name: "ABC: (tester) vs (RivalOne)",
+        games: [{ beatmapId: 11, teamType: "head-to-head", plays: [[USER_ID, 500_000, "none", ["NF", "EZ"]], [OPPONENT_A, 800_000]] }],
+      });
+    const myAvgScore = async (id: number) =>
+      (await db.sql<{ avg_score: number }[]>`select avg_score from match_players where match_id = ${id} and user_id = ${USER_ID}`)[0]!.avg_score;
+
+    it("counts EZ scores ×1.8 by default", async () => {
+      const id = await save(ezMatch(90004));
+      const [match] = await db.sql`select ez_multiplier from matches where id = ${id}`;
+      expect(match!.ez_multiplier).toBe(1.8);
+      expect(await myAvgScore(id)).toBe(900_000);
+      expect((await getMatchDetail(db.sql, USER_ID, id))!.result).toBe("won");
+    });
+
+    it("moves matches saved at ×1 to ×1.8 and recomputes them", async () => {
+      const id = await save(ezMatch(90005));
+      await updateMatchSettings(db.sql, id, { warmups: 0, skipLast: 0, ezMultiplier: 1 });
+      expect(await myAvgScore(id)).toBe(500_000);
+
+      await db.sql`delete from schema_migrations where name = '009_ez_multiplier_default.sql'`;
+      expect(await migrate(db.sql)).toEqual(["009_ez_multiplier_default.sql"]);
+      const [match] = await db.sql`select ez_multiplier from matches where id = ${id}`;
+      expect(match!.ez_multiplier).toBe(1.8);
+      expect(await myAvgScore(id)).toBe(900_000);
+    });
   });
 
   it("saves lazer ranked play rooms as 1v1s, keeping osu!'s PP", async () => {

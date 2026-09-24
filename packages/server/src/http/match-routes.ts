@@ -150,7 +150,7 @@ export function mountMatchRoutes(app: Hono, deps: AppDeps): void {
     const ok = await updateMatchSettings(sql, id, {
       warmups: Math.trunc(bounded(form.warmups, 0, 50, 0)),
       skipLast: Math.trunc(bounded(form.skip_last, 0, 50, 0)),
-      ezMultiplier: bounded(form.ez_multiplier, 0.1, 10, 1),
+      ezMultiplier: bounded(form.ez_multiplier, 0.1, 10, 1.8),
     });
     if (!ok) return c.html(messagePage("Not found", "That match isn't in the database.", player), 404);
     return c.redirect(`/matches/${id}`, 303);
