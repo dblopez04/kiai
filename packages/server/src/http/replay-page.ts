@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { html, raw } from "hono/html";
-import { displayPp, playSummary, publicReplayUrl, replayTitle } from "../render/notify.ts";
+import { displayPp, playSummary, publicReplayUrl, publicVideoUrl, replayTitle } from "../render/notify.ts";
 import { mapPalette, type MapPalette } from "../replays/palette.ts";
 import type { ReplayView } from "../replays/store.ts";
 import { modLabel, modSettingLabels } from "../scores/mods.ts";
@@ -48,7 +48,7 @@ const modText = (r: ReplayView) =>
 /** The page, and the CSP source that allows its style block. */
 export function replayPage(r: ReplayView, origin: string): { body: Html; styleSrc: string } {
   const url = publicReplayUrl(origin, r.id);
-  const video = `${url}/video.mp4?v=${r.render?.id ?? 0}`;
+  const video = publicVideoUrl(origin, r);
   const title = replayTitle(r);
   const summary = `${playSummary(r)} · played by ${r.player_name}${r.devserver ? ` on ${r.devserver}` : ""}`;
   const palette = paletteOf(r);

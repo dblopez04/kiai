@@ -68,6 +68,17 @@ function discordFetch(sent: Sent[]): typeof fetch {
   }) as typeof fetch;
 }
 
+/** A rendered message's text and video, checking it's one Components V2 container without content or embeds. */
+function renderedComponents(body: object): { text: string; video: string | undefined } {
+  const message = body as { flags: number; content?: unknown; embeds?: unknown; components: { type: number; components: { type: number; content?: string; items?: { media: { url: string } }[] }[] }[] };
+  expect(message.flags & (1 << 15)).toBeTruthy();
+  expect(message.content).toBeUndefined();
+  expect(message.embeds).toBeUndefined();
+  expect(message.components.map((c) => c.type)).toEqual([17]);
+  const parts = message.components[0]!.components;
+  return { text: parts.find((c) => c.type === 10)!.content!, video: parts.find((c) => c.type === 12)?.items?.[0]?.media.url };
+}
+
 /** Upload a replay of MAP (DT, 38/2/0/0), install the map, and render it. */
 async function renderedReplay(notifier: ReturnType<typeof discordNotifier> = null, decodeImage: ImageDecoder | null = null): Promise<string> {
   await installOsz(db.sql, media, await writeZip(), "upload-test", "upload");
@@ -155,19 +166,18 @@ describe("map palette", () => {
 });
 
 describe("Discord", () => {
-  it("DMs through a bot, once per render, with the public link for Discord to unfurl", async () => {
+  it("DMs through a bot, once per render, with compact text over the video", async () => {
     const sent: Sent[] = [];
     const notifier = discordNotifier({ botToken: "bot", userId: "123456789012345678", publicUrl: "https://replays.example.com", fetch: discordFetch(sent) });
     const id = await renderedReplay(notifier);
     expect(sent.map((s) => s.url)).toEqual(["https://discord.com/api/v10/users/@me/channels", "https://discord.com/api/v10/channels/555/messages"]);
     expect(sent[0]!.body).toEqual({ recipient_id: "123456789012345678" });
-    // No embed of its own: Discord only unfurls the link (into the video) when a message has none.
-    const message = sent[1]!.body as { content: string; embeds?: unknown };
-    expect(message.embeds).toBeUndefined();
-    const lines = message.content.split("\n");
-    expect(lines[0]).toBe("**kiai - Public Song [Hard]**");
+    const message = renderedComponents(sent[1]!.body);
+    const lines = message.text.split("\n");
+    expect(lines[0]).toBe(`**[kiai - Public Song \\[Hard\\]](https://replays.example.com/r/${id})**`);
     expect(lines[1]).toMatch(/^S · 96\.67% · 40x · \d+pp\\\* · DT 1\.5× · tester$/);
-    expect(lines.at(-1)).toBe(`https://replays.example.com/r/${id}`);
+    expect(lines[2]).toMatch(/^-# \d+\.\d\d★ · AR 10\.33 · OD [\d.]+ · CS 4 · 180 BPM$/);
+    expect(message.video).toMatch(new RegExp(`^https://replays\\.example\\.com/r/${id}/video\\.mp4\\?v=\\d+$`));
 
     // Running the notification step again for the same job sends nothing.
     await db.sql`update render_jobs set status = 'queued'`;
@@ -180,20 +190,23 @@ describe("Discord", () => {
     const notifier = discordNotifier({ webhookUrl: "https://discord.com/api/webhooks/1/abc", fetch: discordFetch(sent) })!;
     const id = await renderedReplay();
     await notifier.failed((await getReplay(db.sql, id))!, "danser exited with code 2.");
-    expect(sent[0]!.url).toBe("https://discord.com/api/webhooks/1/abc?wait=true");
+    expect(sent[0]!.url).toBe("https://discord.com/api/webhooks/1/abc?wait=true&with_components=true");
     expect(sent[0]!.body.content).toContain("Render failed: **kiai - Public Song [Hard]**");
     expect(discordNotifier({})).toBeNull();
-    // Without PUBLIC_URL there's nothing to link.
-    expect(renderedMessage((await getReplay(db.sql, id))!, undefined).content).toContain("Set PUBLIC_URL");
+    // Without PUBLIC_URL there's nothing to link or play.
+    const unlinked = renderedComponents(renderedMessage((await getReplay(db.sql, id))!, undefined));
+    expect(unlinked.text).toContain("Set PUBLIC_URL");
+    expect(unlinked.text.split("\n")[0]).toBe("**kiai - Public Song [Hard]**");
+    expect(unlinked.video).toBeUndefined();
   });
 
-  it("links the video through a webhook too, without uploading it", async () => {
+  it("points the video at the public URL through a webhook too, without uploading it", async () => {
     const sent: Sent[] = [];
     const notifier = discordNotifier({ webhookUrl: "https://discord.com/api/webhooks/1/abc", publicUrl: "https://replays.example.com", fetch: discordFetch(sent) });
     const id = await renderedReplay(notifier);
     expect(sent).toHaveLength(1);
     expect(sent[0]!.body).not.toHaveProperty("attachments");
-    expect(String(sent[0]!.body.content).split("\n").at(-1)).toBe(`https://replays.example.com/r/${id}`);
+    expect(renderedComponents(sent[0]!.body).video).toContain(`https://replays.example.com/r/${id}/video.mp4?v=`);
   });
 });
 

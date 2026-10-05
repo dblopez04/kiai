@@ -29,6 +29,10 @@ install -m755 dist/kiai-linux-x64 ~/.local/bin/kiai
 kiai server set http://homelab:8080 --token <UPLOAD_TOKEN>   # the server's UPLOAD_TOKEN
 ```
 
+To update later, `scripts/redeploy-client.sh` (`--pull` to `git pull` first) rebuilds the client
+for this machine, installs it over the `kiai` on your PATH (or `KIAI_BIN`), and restarts the
+watcher if it's running.
+
 ### Replay watcher
 
 The watcher uploads every replay you export to your kiai server, which renders it with danser:
@@ -103,6 +107,11 @@ fails closed. This also blocks DNS-rebinding attacks and writes from other websi
 To use it from other devices, publish the port on your LAN IP instead of 127.0.0.1, or reach
 it over Tailscale or an SSH tunnel. If you use a hostname other than an IP, a single-label
 name, or a `.local`/`.lan`/`.home.arpa`/`.internal`/`.ts.net` name, add it to `PRIVATE_HOSTS`.
+
+To update later, run `scripts/redeploy-server.sh` on the homelab. It pulls, rebuilds and restarts
+the stack, keeping whichever profiles (`nvidia`, `cpu`, `tunnel`) are running; pass profiles to
+choose them yourself. From another machine, `KIAI_DEPLOY_HOST=you@homelab scripts/redeploy-server.sh`
+runs it over ssh in `KIAI_DEPLOY_DIR` (default `~/kiai`).
 
 ### Score library
 
@@ -320,9 +329,35 @@ of these in `.env`:
   add it to any server you're in; bots can only DM people they share a server with.
 - **Webhook:** `DISCORD_WEBHOOK_URL`, for a channel (e.g. a private one on your own server).
 
-The message is the public link (which Discord turns into a playable video) plus an embed with the
-map, grade, accuracy, combo, pp and mods. pp is osu!'s when the play is in the score library,
+The message is a compact card: the map (linked to its public page), a line with grade, accuracy,
+combo, pp, mods and player, and the map's stars/AR/OD/CS/BPM in small text, all above the video,
+which Discord plays from the public URL. pp is osu!'s when the play is in the score library,
 otherwise rosu-pp's estimate (marked `*`).
+
+#### Clips: `/clip`
+
+With the bot set up (`DISCORD_BOT_TOKEN` and `DISCORD_USER_ID`) and `PUBLIC_URL` set, the bot has a
+`/clip` slash command that cuts part of a replay's video:
+
+- **query**: the replay. Type part of the map, difficulty, player or mods (`hddt` matches HD+DT in
+  any order), then pick one from the list. If you send without picking, it uses the newest play
+  that matches.
+- **start** and **end**: where the clip starts and ends in the rendered video, as you'd see it in
+  the player: `1:23`, `1:23.5`, `83` or `1:02:03`. Clips can be up to 5 minutes long. An end past
+  the video's end stops at the end.
+
+The bot replies "clipping…" and edits that reply into the clip (the same card as above, with the
+clip's range) when it's done. A replay with no render yet is rendered first. If that takes more
+than 15 minutes (Discord's limit for editing the reply), the clip comes as a DM instead.
+
+- Only `DISCORD_USER_ID` can use the command, since clips and renders run on your machine.
+  Anyone else gets a private "only the owner" reply.
+- The bot connects to Discord from the `server` container (`serve` or `web`), so it needs no
+  public endpoint. It registers `/clip` when it connects. To use it outside servers the bot is in,
+  install the app on your account (Developer Portal → Installation → User Install).
+- The render worker cuts clips with ffmpeg in a slot of its own, so a clip doesn't wait behind a
+  render. Clips are re-encoded with x264, so the cut lands on the exact frame. They're served at
+  `/c/<id>/video.mp4` on the public site.
 
 ### Commands
 
