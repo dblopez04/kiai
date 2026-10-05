@@ -1,5 +1,6 @@
 import { crc32 } from "node:zlib";
 import { createHash } from "node:crypto";
+import { compressString } from "lzma1";
 
 export interface OsrOptions {
   rulesetId?: number;
@@ -13,6 +14,10 @@ export interface OsrOptions {
   modBits?: number;
   playedAt?: Date;
   onlineScoreId?: bigint;
+  /** Lazer's score info block with these mods (set a lazer gameVersion too); a Buffer is written as is. */
+  lazerMods?: unknown[] | Buffer;
+  /** Target Practice's accuracy, written before lazer's block. */
+  targetAccuracy?: number;
   /** Bytes of fake cursor data, so different replays have different files. */
   data?: Buffer;
 }
@@ -56,6 +61,12 @@ export function buildOsr(o: OsrOptions = {}): Buffer {
   i32(data.length);
   parts.push(data);
   i64(o.onlineScoreId ?? 0n);
+  if (o.targetAccuracy !== undefined) { const b = Buffer.alloc(8); b.writeDoubleLE(o.targetAccuracy); parts.push(b); }
+  if (o.lazerMods) {
+    const info = Buffer.isBuffer(o.lazerMods) ? o.lazerMods : Buffer.from(compressString(JSON.stringify({ online_id: -1, mods: o.lazerMods })));
+    i32(info.length);
+    parts.push(info);
+  }
   return Buffer.concat(parts);
 }
 

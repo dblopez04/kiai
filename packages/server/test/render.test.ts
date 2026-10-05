@@ -10,7 +10,7 @@ import { danserCommand, danserRenderer, type Renderer } from "../src/render/dans
 import { EMBED_MAX_BYTES, type Embedder } from "../src/render/embed.ts";
 import { ensureBeatmap, installOsz, parseOsuMetadata } from "../src/render/maps.ts";
 import { claimRender, enqueueRender, MAX_RENDER_ATTEMPTS } from "../src/render/queue.ts";
-import { runNextRender, type RenderDeps } from "../src/render/worker.ts";
+import { refreshLazerReplayMods, runNextRender, type RenderDeps } from "../src/render/worker.ts";
 import { legacyMods, parseReplay, replayRank } from "../src/replays/osr.ts";
 import { deleteRenderVideos, deleteReplays, listReplayPage, pruneSupersededRenders, replayStorage } from "../src/replays/manage.ts";
 import { getReplay, linkReplays, normalizeDevserver, replayFile, saveReplay } from "../src/replays/store.ts";
@@ -92,6 +92,16 @@ describe("replay files", () => {
     expect(parseReplay(trimmed).onlineScoreId).toBe(12345);
   });
 
+  it("takes mod settings such as a DT rate from lazer's score info", () => {
+    const rated = parseReplay(buildOsr({ gameVersion: 30000019, modBits: 64, lazerMods: [{ acronym: "DT", settings: { speed_change: 1.2 } }] }));
+    expect(rated.mods).toEqual([{ acronym: "DT", settings: { speed_change: 1.2 } }]);
+    // Target Practice's accuracy sits between the score id and lazer's block.
+    const tp = parseReplay(buildOsr({ gameVersion: 30000019, modBits: 1 << 23, targetAccuracy: 0.97, lazerMods: [{ acronym: "TP" }, { acronym: "HT", settings: { speed_change: 0.8 } }] }));
+    expect(tp.mods.map((m) => m.acronym)).toEqual(["TP", "HT"]);
+    // An unreadable block falls back to the mod bits.
+    expect(parseReplay(buildOsr({ gameVersion: 30000019, modBits: 64, lazerMods: Buffer.from("not lzma") })).mods).toEqual([{ acronym: "DT" }]);
+  });
+
   it("maps legacy mods and grades like stable", () => {
     expect(legacyMods(32 | 16384 | 16).map((m) => m.acronym)).toEqual(["HR", "PF"]);
     expect(replayRank({ count300: 100, count100: 0, count50: 0, countMiss: 0, mods: [{ acronym: "HD" }] })).toBe("XH");
@@ -147,6 +157,21 @@ describe("saving and linking replays", () => {
     expect((await getReplay(db.sql, b.id))?.score_id).toBe(byPlay.id);
     expect((await getReplay(db.sql, onGatari.id))?.score_id).toBeNull();
     expect((await getReplay(db.sql, someoneElse.id))?.score_id).toBeNull();
+  });
+
+  it("re-reads the mods of lazer replays saved without their settings", async () => {
+    const rate = [{ acronym: "DT", settings: { speed_change: 1.2 } }];
+    const lazer = await saveReplay(db.sql, media, buildOsr({ gameVersion: 30000019, modBits: 64, lazerMods: rate }), null);
+    const stable = await saveReplay(db.sql, media, buildOsr({ modBits: 64, data: Buffer.from("stable") }), null);
+    expect((await getReplay(db.sql, lazer.id))?.mods).toEqual(rate);
+    // As saved before the score info was read.
+    await db.sql`update replays set mods = ${db.sql.json([{ acronym: "DT" }])} where id = ${lazer.id}`;
+
+    const log: string[] = [];
+    expect(await refreshLazerReplayMods({ sql: db.sql, paths: media, log: (m) => log.push(m) })).toBe(1);
+    expect((await getReplay(db.sql, lazer.id))?.mods).toEqual(rate);
+    expect((await getReplay(db.sql, stable.id))?.mods).toEqual([{ acronym: "DT" }]);
+    expect(await refreshLazerReplayMods({ sql: db.sql, paths: media, log: (m) => log.push(m) })).toBe(0);
   });
 });
 
