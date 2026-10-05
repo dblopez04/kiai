@@ -24,6 +24,7 @@ import { resolvePlayer, type Player } from "./player.ts";
 import { danserRenderer } from "./render/danser.ts";
 import { discordNotifier } from "./render/notify.ts";
 import { runRenderWorker } from "./render/worker.ts";
+import { ffmpegDecoder } from "./replays/palette.ts";
 import { scoreCsv } from "./scores/csv.ts";
 import { createPpCalculator, type PpCalculator } from "./scores/pp.ts";
 import { SYNC_MODES, type SyncMode } from "./sync/checkpoint.ts";
@@ -276,9 +277,14 @@ async function dispatch(command: string, args: string[], rt: Runtime, io: Io): P
         webhookUrl: config.DISCORD_WEBHOOK_URL,
         publicUrl: config.PUBLIC_URL,
       });
+      // danser's bundled ffmpeg reads map backgrounds for the public page's colours.
+      const decodeImage = ffmpegDecoder(path.join(config.DANSER_DIR, "ffmpeg", "ffmpeg"), {
+        ...process.env,
+        LD_LIBRARY_PATH: [path.join(config.DANSER_DIR, "ffmpeg"), config.DANSER_DIR, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":"),
+      });
       rt.log(notifier ? `Discord notifications on (${config.DISCORD_BOT_TOKEN && config.DISCORD_USER_ID ? "DM" : "webhook"})` : "Discord notifications off");
       await runRenderWorker(
-        { sql: rt.sql, osu: rt.osuOrNull(), paths: media, renderer, clipper: clipperFor(config), mirrors: config.MAP_MIRRORS, playerId: player.id, notifier, log: rt.log },
+        { sql: rt.sql, osu: rt.osuOrNull(), paths: media, renderer, clipper: clipperFor(config), mirrors: config.MAP_MIRRORS, playerId: player.id, notifier, decodeImage, log: rt.log },
         { concurrency: config.RENDER_CONCURRENCY, once: values.once ?? false, signal: controller.signal },
       );
       rt.log("stopped");
