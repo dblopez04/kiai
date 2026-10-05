@@ -173,7 +173,8 @@ describe("settings form", () => {
       Audio: { MusicVolume: 0.3 },
       Gameplay: { ScoreBoard: { Show: false } },
       Skin: { Cursor: { Scale: 0.75 } },
-      Playfield: { Logo: { Enabled: false } },
+      Playfield: { Logo: { Enabled: false }, Bloom: { Enabled: true } },
+      Objects: { Sliders: { DrawScorePoints: false } },
     };
     expect(read(formOf(patch))).toEqual(patch);
     // A value the menus don't list (set in JSON) survives a save.
@@ -187,7 +188,7 @@ describe("settings form", () => {
   });
 
   it("leaves the keys it doesn't cover to the JSON box", () => {
-    const patch = { Recording: { FPS: 120, h264_nvenc: { CQ: 26 } }, Gameplay: { Score: { Show: false } }, Cursor: { TrailStyle: 3 } };
+    const patch = { Recording: { FPS: 120, h264_nvenc: { CQ: 26 } }, Gameplay: { Score: { Show: false } }, Cursor: { TrailStyle: 3, SmokeEnabled: false } };
     expect(withoutFormKeys(patch)).toEqual({ Recording: { h264_nvenc: { CQ: 26 } }, Cursor: { TrailStyle: 3 } });
     expect(mergePatch({ Recording: { FPS: 60, FrameWidth: 1280 } }, { Recording: { FPS: 120 } })).toEqual({ Recording: { FPS: 120, FrameWidth: 1280 } });
   });

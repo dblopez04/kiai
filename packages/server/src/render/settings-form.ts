@@ -123,7 +123,92 @@ export const SETTING_GROUPS: readonly SettingGroup[] = [
   },
 ];
 
-const FIELDS = SETTING_GROUPS.flatMap((group) => group.fields);
+// Every other on/off setting danser 0.11 has that can change a replay video, with danser's
+// default (from settings.NewConfigFile). Left out: General (kiai sets it), Graphics and Input
+// (danser's own window and live play), CursorDance and Knockout (danser's other modes).
+/** [group id, title, key prefix the labels leave out, [key, default][]]. */
+const TOGGLES: readonly (readonly [string, string, string, readonly (readonly [string, boolean])[]])[] = [
+  ["audio", "Audio", "Audio", [
+    ["Audio.OnlineOffset", false], ["Audio.IgnoreBeatmapSampleVolume", false], ["Audio.BeatUseTimingPoints", false],
+  ]],
+  ["gameplay", "Gameplay and HUD", "Gameplay", [
+    ["Gameplay.HitErrorMeter.ShowPositionalMisses", true], ["Gameplay.HitErrorMeter.StaticUnstableRate", false], ["Gameplay.HitErrorMeter.ScaleWithSpeed", false],
+    ["Gameplay.AimErrorMeter.ShowUnstableRate", false], ["Gameplay.AimErrorMeter.StaticUnstableRate", false], ["Gameplay.AimErrorMeter.CapPositionalMisses", true],
+    ["Gameplay.AimErrorMeter.AngleNormalized", false],
+    ["Gameplay.Score.ShowGradeAlways", false], ["Gameplay.Score.StaticScore", false], ["Gameplay.Score.StaticAccuracy", false],
+    ["Gameplay.ComboCounter.Static", false],
+    ["Gameplay.PPCounter.ShowInResults", true], ["Gameplay.PPCounter.ShowPPComponents", false], ["Gameplay.PPCounter.Static", false],
+    ["Gameplay.HitCounter.Vertical", false], ["Gameplay.HitCounter.Show300", false], ["Gameplay.HitCounter.ShowSliderBreaks", false],
+    ["Gameplay.StrainGraph.Outline.Show", false],
+    ["Gameplay.ScoreBoard.ModsOnly", false], ["Gameplay.ScoreBoard.AlignRight", false], ["Gameplay.ScoreBoard.HideOthers", false], ["Gameplay.ScoreBoard.ShowAvatars", false],
+    ["Gameplay.Mods.HideInReplays", false], ["Gameplay.Mods.FoldInReplays", false], ["Gameplay.Mods.ShowLazerMod", true],
+    ["Gameplay.Underlay.AboveHpBar", false],
+    ["Gameplay.ResultsUseLocalTimeZone", false], ["Gameplay.ShowWarningArrows", true], ["Gameplay.ShowHitLighting", false],
+    ["Gameplay.IgnoreFailsInReplays", false], ["Gameplay.LazerClassicScore", false],
+  ]],
+  ["skin", "Skin", "Skin", [
+    ["Skin.Cursor.ForceLongTrail", false],
+  ]],
+  ["cursor", "Cursor", "Cursor", [
+    ["Cursor.Colors.EnableCustomHueOffset", false], ["Cursor.Colors.FlashToTheBeat", false], ["Cursor.EnableCustomTagColorOffset", true],
+    ["Cursor.EnableCustomTrailGlowOffset", true], ["Cursor.CursorExpand", false], ["Cursor.ScaleToTheBeat", false],
+    ["Cursor.ShowCursorsOnBreaks", true], ["Cursor.BounceOnEdges", false], ["Cursor.AdditiveBlending", true], ["Cursor.SmokeEnabled", true],
+  ]],
+  ["objects", "Hit objects", "Objects", [
+    ["Objects.DrawApproachCircles", true], ["Objects.LoadSpinners", true], ["Objects.StackEnabled", true],
+    ["Objects.Sliders.ForceSliderBallTexture", true], ["Objects.Sliders.DrawEndCircles", true], ["Objects.Sliders.DrawSliderFollowCircle", true],
+    ["Objects.Sliders.DrawScorePoints", true], ["Objects.Sliders.Distortions.Enabled", true], ["Objects.Sliders.Distortions.UseCustomResolution", false],
+    ["Objects.Sliders.Snaking.OutFadeInstant", true],
+  ]],
+  ["object-colors", "Hit object colours", "Objects.Colors", [
+    ["Objects.Colors.Color.EnableRainbow", true], ["Objects.Colors.Color.EnableCustomHueOffset", false], ["Objects.Colors.Color.FlashToTheBeat", false],
+    ["Objects.Colors.UseComboColors", false], ["Objects.Colors.UseSkinComboColors", false], ["Objects.Colors.UseBeatmapComboColors", false],
+    ["Objects.Colors.Sliders.WhiteScorePoints", true], ["Objects.Colors.Sliders.SliderBallTint", false],
+    ["Objects.Colors.Sliders.Border.UseHitCircleColor", false], ["Objects.Colors.Sliders.Border.Color.EnableRainbow", false],
+    ["Objects.Colors.Sliders.Border.Color.EnableCustomHueOffset", false], ["Objects.Colors.Sliders.Border.Color.FlashToTheBeat", false],
+    ["Objects.Colors.Sliders.Border.EnableCustomGradientOffset", true],
+    ["Objects.Colors.Sliders.Body.UseHitCircleColor", true], ["Objects.Colors.Sliders.Body.Color.EnableRainbow", false],
+    ["Objects.Colors.Sliders.Body.Color.EnableCustomHueOffset", false], ["Objects.Colors.Sliders.Body.Color.FlashToTheBeat", true],
+  ]],
+  ["playfield", "Playfield", "Playfield", [
+    ["Playfield.DrawObjects", true], ["Playfield.DrawCursors", true], ["Playfield.OsuShift", false],
+    ["Playfield.ScaleStoryboardWithPlayfield", false], ["Playfield.MoveStoryboardWithPlayfield", false],
+    ["Playfield.Background.FlashToTheBeat", false], ["Playfield.Background.Triangles.Enabled", false],
+    ["Playfield.Background.Triangles.Shadowed", true], ["Playfield.Background.Triangles.DrawOverBlur", true],
+    ["Playfield.Logo.DrawSpectrum", false], ["Playfield.Bloom.Enabled", false], ["Playfield.Bloom.BloomToTheBeat", true],
+  ]],
+];
+
+const WORDS: Record<string, string> = { hp: "HP", osu: "osu!", lazer: "lazer", ur: "UR" };
+
+/** ("Gameplay.HitErrorMeter.StaticUnstableRate", "Gameplay") → "Hit error meter › Static unstable rate". */
+function toggleLabel(key: string, prefix: string): string {
+  const parts = key.slice(prefix.length + 1).split(".");
+  if (parts.length > 1 && (parts.at(-1) === "Show" || parts.at(-1) === "Enabled")) parts.pop();
+  return parts
+    .map((part) => {
+      const words = part
+        .replace(/([a-z])(\d)/g, "$1 $2")
+        .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+        .replace(/([a-z\d])([A-Z])/g, "$1 $2")
+        .split(" ")
+        .map((word) => WORDS[word.toLowerCase()] ?? (/^[A-Z]{2,}$/.test(word) ? word : word.toLowerCase()));
+      const text = words.join(" ");
+      return text.startsWith("osu!") ? text : text[0]!.toUpperCase() + text.slice(1);
+    })
+    .join(" › ");
+}
+
+const CURATED = new Set(SETTING_GROUPS.flatMap((group) => group.fields.map((field) => field.key)));
+
+/** The rest of danser's on/off settings, shown folded away under the curated groups. */
+export const TOGGLE_GROUPS: readonly SettingGroup[] = TOGGLES.map(([id, title, prefix, toggles]) => ({
+  id,
+  title,
+  fields: toggles.filter(([key]) => !CURATED.has(key)).map(([key, def]) => check(key, toggleLabel(key, prefix), def)),
+}));
+
+const FIELDS = [...SETTING_GROUPS, ...TOGGLE_GROUPS].flatMap((group) => group.fields);
 
 // ---------- patch paths ----------
 

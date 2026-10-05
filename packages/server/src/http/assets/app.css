@@ -177,6 +177,7 @@ fieldset.settings label.check small, fieldset.settings label.field small { displ
 fieldset.settings label.field { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; }
 details.advanced { justify-self: stretch; }
 details.advanced > label { display: grid; gap: 0.3rem; margin-top: 0.5rem; }
+details.advanced > .settings-groups { margin-top: 0.5rem; }
 .topbar nav.sections { gap: 1.2rem; flex-wrap: wrap; }
 .topbar nav.sections a:not(.brand) { color: var(--muted); text-decoration: none; }
 .topbar nav.sections a:not(.brand):hover { color: var(--accent); }
