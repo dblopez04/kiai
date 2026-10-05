@@ -1,8 +1,9 @@
 // Reading the header of an osu! replay (.osr): which map, who, mods and the result. The cursor
 // data itself is left to danser. Format: https://osu.ppy.sh/wiki/en/Client/File_formats/osr_(file_format)
 
+import { decompressString } from "lzma1";
 import { UserError } from "../errors.ts";
-import type { ScoreMod } from "../scores/mods.ts";
+import { normalizeMods, type ScoreMod } from "../scores/mods.ts";
 
 export interface ReplayHeader {
   rulesetId: number;
@@ -20,6 +21,7 @@ export interface ReplayHeader {
   maxCombo: number;
   perfect: boolean;
   modBits: number;
+  /** Lazer's mods with their settings (a DT rate, say) when the replay has them, else from {@link modBits}. */
   mods: ScoreMod[];
   playedAt: Date;
   /** osu! stable's online score id; 0 when the play wasn't submitted. */
@@ -30,6 +32,9 @@ export interface ReplayHeader {
 const EPOCH_TICKS = 621_355_968_000_000_000n;
 // Replays from before this version store the online score id as a 32-bit integer.
 const INT64_SCORE_ID_VERSION = 20140721;
+// Lazer writes its own score info, with each mod's settings, after the online score id.
+export const LAZER_SCORE_INFO_VERSION = 30000001;
+const TARGET_PRACTICE = 1 << 23;
 const MD5 = /^[0-9a-f]{32}$/;
 
 class Reader {
@@ -74,6 +79,13 @@ class Reader {
     return value;
   }
 
+  bytes(length: number): Buffer {
+    this.#need(length);
+    const value = this.#buffer.subarray(this.offset, this.offset + length);
+    this.offset += length;
+    return value;
+  }
+
   skip(bytes: number): void {
     this.#need(bytes);
     this.offset += bytes;
@@ -111,6 +123,21 @@ export function legacyMods(bits: number): ScoreMod[] {
   return acronyms
     .filter((acronym) => !(acronym === "DT" && acronyms.includes("NC")) && !(acronym === "SD" && acronyms.includes("PF")))
     .map((acronym) => ({ acronym }));
+}
+
+/**
+ * The mods in lazer's score info block (LZMA-compressed JSON), or null when there's no readable
+ * block: stable replays, and anything malformed, fall back to the mod bits.
+ */
+function lazerMods(r: Reader): ScoreMod[] | null {
+  try {
+    const length = r.i32();
+    if (length <= 0) return null;
+    const info = JSON.parse(decompressString(r.bytes(length))) as { mods?: unknown };
+    return Array.isArray(info.mods) ? normalizeMods(info.mods) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** osu!standard accuracy, 0..1. */
@@ -162,10 +189,16 @@ export function parseReplay(buffer: Buffer): ReplayHeader {
   let onlineScoreId = 0n;
   if (gameVersion >= INT64_SCORE_ID_VERSION && r.remaining >= 8) onlineScoreId = r.i64();
   else if (r.remaining >= 4) onlineScoreId = BigInt(r.i32());
+  let mods: ScoreMod[] | null = null;
+  if (gameVersion >= LAZER_SCORE_INFO_VERSION) {
+    // Target Practice's accuracy comes first.
+    if ((modBits & TARGET_PRACTICE) !== 0 && r.remaining >= 8) r.skip(8);
+    mods = lazerMods(r);
+  }
 
   const playedAt = new Date(Number((ticks - EPOCH_TICKS) / 10_000n));
   if (Number.isNaN(playedAt.getTime())) throw new UserError("That file isn't an osu! replay (.osr): its date is invalid.");
-  const mods = legacyMods(modBits);
+  mods ??= legacyMods(modBits);
   const counts = { count300, count100, count50, countMiss };
   return {
     rulesetId,

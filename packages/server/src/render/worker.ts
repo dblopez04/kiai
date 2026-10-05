@@ -10,6 +10,7 @@ import { errorMessage } from "../errors.ts";
 import type { MediaPaths } from "../media.ts";
 import type { OsuClient } from "../osu/api.ts";
 import { replayAttributes } from "../replays/attributes.ts";
+import { LAZER_SCORE_INFO_VERSION, parseReplay, replayRank } from "../replays/osr.ts";
 import { paletteForMap, type ImageDecoder } from "../replays/palette.ts";
 import { getReplay, linkReplays, replayFile, type ReplayView } from "../replays/store.ts";
 import { normalizeMods } from "../scores/mods.ts";
@@ -218,6 +219,30 @@ export async function updateReplayAttributes(sql: Sql, paths: MediaPaths, replay
   return true;
 }
 
+/**
+ * Re-read the mods of lazer replays saved before their settings were read from the file (so a
+ * 1.2× DT counted as 1.5×), and redo their attributes. Returns how many were fixed.
+ */
+export async function refreshLazerReplayMods(deps: Pick<RenderDeps, "sql" | "paths" | "decodeImage" | "log">): Promise<number> {
+  const replays = await deps.sql<{ id: string; mods: unknown }[]>`
+    select id, mods from replays where game_version >= ${LAZER_SCORE_INFO_VERSION} order by id`;
+  let fixed = 0;
+  for (const replay of replays) {
+    let header;
+    try {
+      header = parseReplay(await fs.readFile(replayFile(deps.paths, replay.id)));
+    } catch {
+      continue;
+    }
+    if (JSON.stringify(header.mods) === JSON.stringify(normalizeMods(replay.mods))) continue;
+    await deps.sql`update replays set mods = ${sqlJson(deps.sql, header.mods)}, rank = ${replayRank(header)} where id = ${replay.id}`;
+    await updateReplayAttributes(deps.sql, deps.paths, replay.id, deps.decodeImage);
+    fixed++;
+  }
+  if (fixed) deps.log(`re-read the mods of ${fixed} lazer replay(s)`);
+  return fixed;
+}
+
 /** Send one notification per finished job, if a notifier is configured. */
 async function notify(
   deps: RenderDeps,
@@ -255,6 +280,11 @@ function pause(ms: number, signal?: AbortSignal): Promise<void> {
 
 /** Run render jobs, and clip jobs alongside them, until `signal` aborts. */
 export async function runRenderWorker(deps: RenderDeps, options: RenderWorkerOptions): Promise<void> {
+  try {
+    await refreshLazerReplayMods(deps);
+  } catch (error) {
+    deps.log(`couldn't re-read lazer replay mods: ${errorMessage(error)}`);
+  }
   const clipper = deps.clipper;
   const next = (kind: "render" | "clip") =>
     kind === "render"
