@@ -122,7 +122,8 @@ Phases 3–5 implement all six steps, plus the score link. Modules:
 | `replays/palette.ts` | Page colours from the map (background hue via ffmpeg, else combo colours, else a hash), stored in `replays.palette` with the attributes |
 | `replays/gallery.ts` | Phase 6: rendered replays as score-shaped rows (`s`, `b`), so `scoreConditions` filters them unchanged; best per map by beatmap id, or MD5 for unknown maps |
 | `render/worker.ts` | Claim → map → link → render → record; `needs_map` parks a job until its .osz is uploaded |
-| `http/replays.ts` | Upload API (bearer `UPLOAD_TOKEN`), replay JSON, video with byte ranges, private replay pages |
+| `http/replays.ts` | Upload API (bearer `UPLOAD_TOKEN`), replay JSON, video with byte ranges, private replay pages and the management panel |
+| `replays/manage.ts` | The panel's paged list and storage totals; deleting replays (locking their jobs so a finishing render can't leave a video behind), just their videos, or videos a newer render replaced |
 
 What the code relies on from danser 0.11's source:
 - Settings live next to the binary (`settings/<name>.json`), and danser rewrites the file on load.

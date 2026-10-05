@@ -1,5 +1,6 @@
 // Progressive enhancement for the server-rendered pages. Everything works without it except the
-// mod filter buttons, the all/none type buttons, live sync progress and the score link check.
+// mod filter buttons, the all/none type buttons, live sync progress, the score link check, and the
+// replay panel's select-all box and confirmation prompts.
 
 const STATES = ["off", "required", "optional", "excluded"];
 const FIELDS = { required: "mods", optional: "mods_optional", excluded: "mods_excluded" };
@@ -106,7 +107,39 @@ function setupScoreLink(box) {
   });
 }
 
+function setupReplayManager(form) {
+  const boxes = () => [...form.querySelectorAll('input[name="id"]')];
+  const selectAll = form.querySelector("[data-select-all]");
+  const count = form.querySelector("[data-selected-count]");
+  const update = () => {
+    const checked = boxes().filter((box) => box.checked).length;
+    count.textContent = checked ? `${checked} selected` : "Tick replays to act on them.";
+    for (const button of form.querySelectorAll("[data-needs-selection]")) button.disabled = checked === 0;
+    selectAll.checked = checked > 0 && checked === boxes().length;
+    selectAll.indeterminate = checked > 0 && checked < boxes().length;
+  };
+  selectAll.hidden = false;
+  selectAll.addEventListener("change", () => {
+    for (const box of boxes()) box.checked = selectAll.checked;
+    update();
+  });
+  form.addEventListener("change", (event) => {
+    if (event.target.name === "id") update();
+  });
+  update();
+}
+
+// Destructive forms and buttons carry data-confirm; "{n}" is how many replays are ticked.
+function confirmSubmit(event) {
+  const form = event.target;
+  const message = event.submitter?.dataset.confirm ?? form.dataset.confirm;
+  const ticked = form.querySelectorAll('input[name="id"]:checked').length;
+  if (message && !confirm(message.replace("{n}", String(ticked)))) event.preventDefault();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  document.addEventListener("submit", confirmSubmit);
+  document.querySelectorAll("[data-replay-manager]").forEach(setupReplayManager);
   document.querySelectorAll("[data-modfilter]").forEach(setupModFilter);
   document.querySelectorAll("[data-filters]").forEach(setupFilterForm);
   document.querySelectorAll("fieldset[data-checkall]").forEach(setupCheckAll);

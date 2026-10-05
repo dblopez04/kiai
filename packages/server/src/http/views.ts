@@ -6,6 +6,7 @@ import { filtersToParams, SORT_KEYS, type BeatmapView, type ScoreFilters, type S
 import type { SyncOverview, SyncRun } from "../sync/queue.ts";
 import type { Player } from "../player.ts";
 import type { RenderPreset } from "../render/presets.ts";
+import type { RenderFilter, ReplayListPage, ReplayStorage } from "../replays/manage.ts";
 import type { ReplayView } from "../replays/store.ts";
 
 type Html = ReturnType<typeof html>;
@@ -423,30 +424,98 @@ function renderState(r: ReplayView): Html {
   return job.status === "running" ? html`${label} ${job.progress}%` : job.status === "failed" || job.status === "needs_map" ? html`<span class="alert">${label}</span>` : html`${label}`;
 }
 
-export function replaysPage(replays: readonly ReplayView[], player: Player, notice?: string): Html {
+const megabytes = (bytes: number) => (bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`);
+
+const RENDER_FILTER_LABELS: Record<RenderFilter, string> = {
+  all: "Any render state",
+  rendered: "Rendered",
+  pending: "Queued or rendering",
+  problem: "Failed or needs the beatmap",
+  none: "Not rendered",
+};
+
+export interface ReplaysPageData {
+  list: ReplayListPage;
+  storage: ReplayStorage;
+  presets: readonly RenderPreset[];
+  query: string;
+  render: RenderFilter;
+}
+
+export function replaysPage(d: ReplaysPageData, player: Player, notice?: string): Html {
+  const { list, storage } = d;
+  const replays = list.replays;
   const active = replays.some((r) => r.render && ["queued", "running"].includes(r.render.status));
+  const listUrl = (page: number) => {
+    const params = new URLSearchParams();
+    if (d.query) params.set("q", d.query);
+    if (d.render !== "all") params.set("render", d.render);
+    if (page > 1) params.set("page", String(page));
+    return `?${params}`;
+  };
+  const back = listUrl(list.pagination.page);
+  const filtered = d.query !== "" || d.render !== "all";
   return layout(
     "Replays",
     html`${notice ? html`<p class="notice" role="status">${notice}</p>` : ""}
+    <section class="card" aria-label="Storage">
+      <h2>Storage</h2>
+      <p>${fmt.number(storage.replays)} replays · ${megabytes(storage.render_bytes)} of rendered videos · ${megabytes(storage.clip_bytes)} of clips</p>
+      ${storage.superseded_videos > 0
+        ? html`<form method="post" action="/replays/cleanup" class="row wrap" data-confirm="Delete ${fmt.number(storage.superseded_videos)} older videos that newer renders replaced?">
+            <input type="hidden" name="back" value="${back}">
+            <span>${fmt.number(storage.superseded_videos)} older videos (${megabytes(storage.superseded_bytes)}) were replaced by newer renders of the same replay.</span>
+            <button class="dangerous">Delete older videos</button>
+          </form>`
+        : ""}
+    </section>
     <section class="card" aria-label="Replays">
-      <h2>Replays <span class="muted small">${fmt.number(replays.length)} most recent</span></h2>
+      <h2>Replays <span class="muted small">${fmt.number(list.pagination.total_count)} ${filtered ? "matching" : "in all"}</span></h2>
+      <form method="get" action="/replays" class="row wrap">
+        <input type="search" name="q" value="${d.query}" placeholder="Map, player or mods (hddt)" aria-label="Search replays">
+        <select name="render" aria-label="Render state">
+          ${Object.entries(RENDER_FILTER_LABELS).map(([value, label]) => html`<option value="${value}" ${value === d.render ? "selected" : ""}>${label}</option>`)}
+        </select>
+        <button>Search</button>
+        ${filtered ? html`<a href="/replays">Clear</a>` : ""}
+      </form>
       ${replays.length === 0
-        ? html`<p>No replays yet. Upload one from the PC you play on with <code>kiai render &lt;file.osr&gt;</code>.</p>`
-        : html`<div class="tablewrap"><table class="scores">
-            <thead><tr><th>Rank</th><th>Beatmap</th><th>Mods</th><th class="r">Acc</th><th>Player</th><th>Server</th><th>Render</th><th>Uploaded</th></tr></thead>
-            <tbody>${replays.map(
-              (r) => html`<tr>
-                <td><span class="${rankClass(r.rank)}">${rankLabel(r.rank)}</span></td>
-                <td class="map"><a href="/replays/${r.id}">${replayTitle(r)}</a> ${r.beatmap?.version ? html`<span class="muted">[${r.beatmap.version}]</span>` : ""}</td>
-                <td>${modChips(r.mods)}</td>
-                <td class="r">${fmt.acc(r.accuracy)}</td>
-                <td>${r.player_name}</td>
-                <td>${r.devserver ?? "osu!"}</td>
-                <td class="nowrap">${renderState(r)}</td>
-                <td class="nowrap">${fmt.date(r.uploaded_at)}</td>
-              </tr>`,
-            )}</tbody>
-          </table></div>`}
+        ? filtered
+          ? html`<p>No replays match.</p>`
+          : html`<p>No replays yet. Upload one from the PC you play on with <code>kiai render &lt;file.osr&gt;</code>.</p>`
+        : html`<form method="post" action="/replays/manage" data-replay-manager>
+            <input type="hidden" name="back" value="${back}">
+            <div class="row wrap toolbar">
+              <span class="muted small" data-selected-count>Tick replays to act on them.</span>
+              <select name="preset" aria-label="Preset"><option value="">Preset: pick with the rules</option>${d.presets.map((p) => html`<option value="${p.name}">Preset: ${p.name}</option>`)}</select>
+              <button name="action" value="render" data-needs-selection>Render again</button>
+              <button name="action" value="delete_videos" class="dangerous" data-needs-selection
+                data-confirm="Delete the rendered videos of {n} replays? The replays and their clips are kept, and can be rendered again.">Delete videos</button>
+              <button name="action" value="delete" class="dangerous" data-needs-selection
+                data-confirm="Delete {n} replays with their videos and clips? This can't be undone.">Delete replays</button>
+            </div>
+            <div class="tablewrap"><table class="scores">
+              <thead><tr>
+                <th><input type="checkbox" data-select-all aria-label="Select every replay on this page" hidden></th>
+                <th>Rank</th><th>Beatmap</th><th>Mods</th><th class="r">Acc</th><th>Player</th><th>Server</th><th>Render</th><th class="r">Video</th><th>Uploaded</th>
+              </tr></thead>
+              <tbody>${replays.map(
+                (r) => html`<tr>
+                  <td><input type="checkbox" name="id" value="${r.id}" aria-label="Select ${replayTitle(r)}"></td>
+                  <td><span class="${rankClass(r.rank)}">${rankLabel(r.rank)}</span></td>
+                  <td class="map"><a href="/replays/${r.id}">${replayTitle(r)}</a> ${r.beatmap?.version ? html`<span class="muted">[${r.beatmap.version}]</span>` : ""}</td>
+                  <td>${modChips(r.mods)}</td>
+                  <td class="r">${fmt.acc(r.accuracy)}</td>
+                  <td>${r.player_name}</td>
+                  <td>${r.devserver ?? "osu!"}</td>
+                  <td class="nowrap">${renderState(r)}</td>
+                  <td class="r nowrap">${r.render?.video_bytes ? megabytes(r.render.video_bytes) : html`<span class="muted">—</span>`}</td>
+                  <td class="nowrap">${fmt.date(r.uploaded_at)}</td>
+                </tr>`,
+              )}</tbody>
+            </table></div>
+          </form>`}
+      ${pager(list.pagination, listUrl)}
       ${active ? html`<p class="muted small">Renders in progress. Reload to see their status.</p>` : ""}
     </section>`,
     player,
@@ -504,7 +573,14 @@ export function replayPage(r: ReplayView, player: Player, publicUrl?: string, pr
             </form>`
           : ""}
       </section>
-    </div>`,
+    </div>
+    <details class="danger">
+      <summary>Delete this replay…</summary>
+      <p>This deletes the replay file, every render and clip of it, and their videos. Its public page stops working. This can't be undone.</p>
+      <form method="post" action="/replays/${r.id}/delete" data-confirm="Delete this replay with its videos and clips?">
+        <button class="dangerous">Delete replay</button>
+      </form>
+    </details>`,
     player,
   );
 }

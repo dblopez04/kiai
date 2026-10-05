@@ -262,11 +262,11 @@ export async function listReplaysByIds(sql: Sql, ids: readonly string[]): Promis
 }
 
 /**
- * Replays whose map, difficulty, player or mods contain every word of `query`, newest plays
- * first. A word like `hddt` also matches a replay with all of those mods, in any order. An empty
- * query lists the newest.
+ * Matches replays (`r`, with `b` its map and `f` its .osu file) whose map, difficulty, player or
+ * mods contain every word of `query`. A word like `hddt` also matches a replay with all of those
+ * mods, in any order. An empty query matches every replay.
  */
-export async function searchReplays(sql: Sql, query: string, limit = 25): Promise<ReplayView[]> {
+export function replaySearchCondition(sql: Sql, query: string) {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
   const haystack = sql`lower(concat_ws(' ', coalesce(b.artist, f.artist), coalesce(b.title, f.title), coalesce(b.version, f.version),
     r.player_name, array_to_string(r.mod_acronyms, ' ')))`;
@@ -274,8 +274,12 @@ export async function searchReplays(sql: Sql, query: string, limit = 25): Promis
     const mods = /^([a-z][a-z0-9])+$/.test(word) ? word.toUpperCase().match(/../g)! : null;
     return mods ? sql`(strpos(${haystack}, ${word}) > 0 or r.mod_acronyms @> ${mods}::text[])` : sql`strpos(${haystack}, ${word}) > 0`;
   });
-  const where = conditions.reduce((all, condition) => sql`${all} and ${condition}`, sql`true`);
-  const rows = await sql`${sql.unsafe(SELECT)} where ${where} order by r.played_at desc, r.id limit ${limit}`;
+  return conditions.reduce((all, condition) => sql`${all} and ${condition}`, sql`true`);
+}
+
+/** Replays matching `query` (see `replaySearchCondition`), newest plays first. */
+export async function searchReplays(sql: Sql, query: string, limit = 25): Promise<ReplayView[]> {
+  const rows = await sql`${sql.unsafe(SELECT)} where ${replaySearchCondition(sql, query)} order by r.played_at desc, r.id limit ${limit}`;
   return rows.map(toReplayView);
 }
 
