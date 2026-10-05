@@ -18,7 +18,7 @@ import {
   addRule, BUILTIN_SKIN, choosePreset, DEFAULT_PRESET_NAME, deletePreset, deleteRule, deleteSkin, getPreset, installSkin,
   listPresets, listRules, listSkins, moveRule, parsePatch, savePreset, skinNameFrom, updateRule, type PresetChoice, type RenderPreset, type RenderRule,
 } from "../render/presets.ts";
-import { fieldValue, mergePatch, SETTING_GROUPS, settingsFromForm, withoutFormKeys, type Patch, type SettingField } from "../render/settings-form.ts";
+import { fieldValue, mergePatch, SETTING_GROUPS, settingsFromForm, TOGGLE_GROUPS, withoutFormKeys, type Patch, type SettingField } from "../render/settings-form.ts";
 import { ruleFacts, type RuleFacts } from "../render/rules.ts";
 import { updateReplayAttributes } from "../render/worker.ts";
 import { getReplay, listReplays, type ReplayView } from "../replays/store.ts";
@@ -133,7 +133,7 @@ function settingField(field: SettingField, patch: Patch): Html {
   const hint = field.hint ? html` <small class="muted">${field.hint}</small>` : "";
   switch (field.kind) {
     case "check":
-      return html`<label class="check"><input type="checkbox" name="${field.key}" value="1" ${value ? html`checked` : ""}> <span>${field.label}${hint}</span></label>`;
+      return html`<label class="check" title="${field.key}"><input type="checkbox" name="${field.key}" value="1" ${value ? html`checked` : ""}> <span>${field.label}${hint}</span></label>`;
     case "percent":
       return html`<label class="field"><span>${field.label}</span>
         <span class="nowrap"><input type="number" class="num" name="${field.key}" value="${value}" min="0" max="100" step="1" required> %</span></label>`;
@@ -154,6 +154,7 @@ function settingField(field: SettingField, patch: Patch): Html {
 function presetForm(p: RenderPreset, skins: readonly string[], create: { from: string } | null): Html {
   const advanced = withoutFormKeys(p.patch);
   const hasAdvanced = Object.keys(advanced).length > 0;
+  const togglesChanged = TOGGLE_GROUPS.some((group) => group.fields.some((field) => fieldValue(field, p.patch) !== field.default));
   return html`<form method="post" action="${create ? `/render/presets?from=${encodeURIComponent(create.from)}` : `/render/presets/${p.name}`}" class="stack">
     <input type="hidden" name="form" value="settings">
     ${create ? html`<label>Name <input name="name" required pattern="[a-z0-9][a-z0-9_\\-]{0,31}" placeholder="hd" autofocus></label>` : ""}
@@ -173,6 +174,16 @@ function presetForm(p: RenderPreset, skins: readonly string[], create: { from: s
         </fieldset>`,
       )}
     </div>
+    <details ${togglesChanged ? html`open` : ""} class="advanced">
+      <summary>All danser toggles</summary>
+      <div class="settings-groups">
+        ${TOGGLE_GROUPS.map(
+          (group) => html`<fieldset class="settings"><legend>${group.title}</legend>
+            ${group.fields.map((field) => settingField(field, p.patch))}
+          </fieldset>`,
+        )}
+      </div>
+    </details>
     <details ${hasAdvanced ? html`open` : ""} class="advanced">
       <summary>Other danser settings (JSON)</summary>
       <label>Anything the form above doesn't cover; keys as in danser's <code>settings/default.json</code>
