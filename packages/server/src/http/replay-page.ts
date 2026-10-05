@@ -1,5 +1,6 @@
 // The public page for one replay: a plain, static, monospace page in its map's colours. Its one
-// <style> block carries the colours, so the page sends a CSP that allows that block by hash.
+// <style> block carries the colours, so the page sends a CSP that allows that block by hash. The text
+// keeps a narrow column; the video breaks out of it, centred, up to 1280px wide and never taller than the screen.
 
 import { createHash } from "node:crypto";
 import { html, raw } from "hono/html";
@@ -29,7 +30,7 @@ a{color:var(--accent)} a:visited{color:var(--visited)}
 .path{color:var(--muted)} .path a,.path a:visited{color:inherit}
 h1{font-size:inherit;margin:18px 0 0;overflow-wrap:anywhere} h1 span{color:var(--accent)}
 .sub{margin:0;color:var(--muted)}
-video{display:block;width:100%;aspect-ratio:16/9;background:#000;margin-top:16px}
+video{--w:min(calc(100vw - 32px),1280px,calc((100vh - 32px) * 16 / 9));display:block;width:var(--w);aspect-ratio:16/9;background:#000;margin:16px 0 0 calc(50% - var(--w) / 2)}
 h2{font-size:inherit;margin:20px 0 4px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent)}
 dl{margin:0} dl div{display:flex;flex-wrap:wrap;column-gap:1ch} dt,dd{margin:0}
 dl div::after{content:"";order:1;flex:1 0 2ch;border-bottom:2px dotted var(--rule);margin-bottom:.4em;align-self:flex-end}
