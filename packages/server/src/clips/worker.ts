@@ -39,6 +39,8 @@ export interface FfmpegOptions {
 /**
  * Re-encodes the stretch with x264, so the cut lands on the exact frame rather than the nearest
  * keyframe. Clips are short, so this takes seconds on the CPU, next to a render on the GPU.
+ * The audio is copied: danser's bundled ffmpeg has no audio decoders, and its renders are AAC
+ * already, whose packets are short enough (~21 ms) to cut on.
  */
 export function ffmpegClipper(options: FfmpegOptions): Clipper {
   const env = options.libraryPath
@@ -66,7 +68,7 @@ export function ffmpegClipper(options: FfmpegOptions): Clipper {
           "-t", ((endMs - input.startMs) / 1000).toFixed(3),
           "-map", "0:v:0", "-map", "0:a:0?",
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-          "-c:a", "aac", "-b:a", "192k",
+          "-c:a", "copy",
           "-movflags", "+faststart",
           input.output,
         ],
