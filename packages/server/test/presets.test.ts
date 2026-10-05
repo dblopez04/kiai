@@ -173,6 +173,7 @@ describe("settings form", () => {
       Audio: { MusicVolume: 0.3 },
       Gameplay: { ScoreBoard: { Show: false } },
       Skin: { Cursor: { Scale: 0.75 } },
+      Playfield: { Logo: { Enabled: false } },
     };
     expect(read(formOf(patch))).toEqual(patch);
     // A value the menus don't list (set in JSON) survives a save.

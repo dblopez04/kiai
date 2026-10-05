@@ -48,6 +48,7 @@ export const SETTING_GROUPS: readonly SettingGroup[] = [
       { kind: "select", key: "Recording.FPS", label: "Frame rate", default: 60, options: [[30, "30 fps"], [60, "60 fps"], [120, "120 fps"], [240, "240 fps"]], min: 1, max: 1000 },
       check("Recording.MotionBlur.Enabled", "Motion blur", false, "Draws 16 frames for each one: many times slower."),
       check("Gameplay.ShowResultsScreen", "Results screen at the end", true),
+      check("Playfield.Logo.Enabled", "danser logo in the intro", true, "Shown during the lead-in, even when skipping the intro."),
     ],
   },
   {
