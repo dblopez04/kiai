@@ -1,13 +1,16 @@
-import { createWriteStream } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 import { serve as serveHttp } from "@hono/node-server";
 import pkg from "../package.json" with { type: "json" };
+import { ffmpegClipper } from "./clips/worker.ts";
 import { loadConfig, requireOsuCredentials, requireOsuUser, type Config, type Env } from "./config.ts";
 import { connectDb, migrate, type Sql } from "./db/index.ts";
-import { UserError } from "./errors.ts";
+import { runDiscordBot } from "./discord/bot.ts";
+import { errorMessage, UserError } from "./errors.ts";
 import { createApp } from "./http/app.ts";
 import { createPublicApp } from "./http/public.ts";
 import { scanStableFrom } from "./matches/discovery.ts";
@@ -183,6 +186,36 @@ function startWorker(rt: Runtime, player: Player, signal: AbortSignal, once = fa
   return Promise.all([sync, matches]).then(() => {});
 }
 
+/**
+ * The Discord bot's slash commands, run by the private web process (one per install, so each
+ * command is answered once). Needs the bot token and the owner's user id.
+ */
+async function startBot(rt: Runtime, signal: AbortSignal): Promise<void> {
+  const { config } = rt;
+  if (!config.DISCORD_BOT_TOKEN || !config.DISCORD_USER_ID) return;
+  try {
+    await runDiscordBot({
+      sql: rt.sql,
+      botToken: config.DISCORD_BOT_TOKEN,
+      ownerId: config.DISCORD_USER_ID,
+      publicUrl: config.PUBLIC_URL,
+      log: rt.log,
+      signal,
+    });
+  } catch (error) {
+    // A refused token shouldn't take the web UI down with it.
+    rt.log(`Discord bot stopped: ${errorMessage(error)}`);
+  }
+}
+
+/** danser's bundled ffmpeg in the render image; whatever is on PATH elsewhere. */
+function clipperFor(config: Config) {
+  const bundled = path.join(config.DANSER_DIR, "ffmpeg");
+  return existsSync(path.join(bundled, "ffmpeg"))
+    ? ffmpegClipper({ ffmpeg: path.join(bundled, "ffmpeg"), ffprobe: path.join(bundled, "ffprobe"), libraryPath: bundled })
+    : ffmpegClipper({ ffmpeg: "ffmpeg", ffprobe: "ffprobe" });
+}
+
 async function dispatch(command: string, args: string[], rt: Runtime, io: Io): Promise<number> {
   switch (command) {
     case "migrate": {
@@ -201,6 +234,7 @@ async function dispatch(command: string, args: string[], rt: Runtime, io: Io): P
       await Promise.all([
         startWeb(rt, player, controller.signal),
         command === "serve" ? startWorker(rt, player, controller.signal) : Promise.resolve(),
+        startBot(rt, controller.signal),
       ]);
       rt.log("stopped");
       return 0;
@@ -244,7 +278,7 @@ async function dispatch(command: string, args: string[], rt: Runtime, io: Io): P
       });
       rt.log(notifier ? `Discord notifications on (${config.DISCORD_BOT_TOKEN && config.DISCORD_USER_ID ? "DM" : "webhook"})` : "Discord notifications off");
       await runRenderWorker(
-        { sql: rt.sql, osu: rt.osuOrNull(), paths: media, renderer, mirrors: config.MAP_MIRRORS, playerId: player.id, notifier, log: rt.log },
+        { sql: rt.sql, osu: rt.osuOrNull(), paths: media, renderer, clipper: clipperFor(config), mirrors: config.MAP_MIRRORS, playerId: player.id, notifier, log: rt.log },
         { concurrency: config.RENDER_CONCURRENCY, once: values.once ?? false, signal: controller.signal },
       );
       rt.log("stopped");

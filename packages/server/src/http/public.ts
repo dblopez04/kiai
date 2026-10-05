@@ -1,5 +1,5 @@
-// The public replay app: rendered replay pages, their videos, and a gallery searched with the score
-// library's filters, nothing else. It runs on its own port (PUBLIC_PORT), which is the only one
+// The public replay app: rendered replay pages, their videos, clips made with the Discord bot, and
+// a gallery searched with the score library's filters, nothing else. It runs on its own port (PUBLIC_PORT), which is the only one
 // Caddy and the tunnel ever reach. It shares the database with the private app but never mounts its
 // routes, and shows only replays that have a finished render.
 
@@ -7,9 +7,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { Hono, type Context } from "hono";
 import { html } from "hono/html";
+import { getClip } from "../clips/store.ts";
 import type { Sql } from "../db/index.ts";
 import type { MediaPaths } from "../media.ts";
-import { displayPp, playSummary, publicReplayUrl, replayTitle } from "../render/notify.ts";
+import { displayPp, playSummary, publicReplayUrl, publicVideoUrl, replayTitle } from "../render/notify.ts";
 import { listGallery, type GalleryPage } from "../replays/gallery.ts";
 import { getReplay, type ReplayView } from "../replays/store.ts";
 import { DEFAULT_FILTERS, filtersToParams, parseScoreFilters, type ScoreFilters } from "../scores/query.ts";
@@ -90,7 +91,7 @@ function galleryPage(f: ScoreFilters, page: GalleryPage): Html {
 
 function replayPage(r: ReplayView, origin: string): Html {
   const url = publicReplayUrl(origin, r.id);
-  const video = `${url}/video.mp4?v=${r.render?.id ?? 0}`;
+  const video = publicVideoUrl(origin, r);
   const title = replayTitle(r);
   const summary = `${playSummary(r)} · played by ${r.player_name}${r.devserver ? ` on ${r.devserver}` : ""}`;
   const a = r.attributes;
@@ -187,6 +188,12 @@ export function createPublicApp(deps: PublicAppDeps): Hono {
       select video_path from render_jobs where replay_id = ${replay.id} and status = 'success' order by id desc limit 1`;
     if (!job) return c.text("No such replay.", 404);
     return sendFile(c, path.join(media.root, job.video_path), "video/mp4", VIDEO_CACHE);
+  });
+
+  app.on(["GET", "HEAD"], "/c/:id/video.mp4", async (c) => {
+    const clip = await getClip(sql, c.req.param("id"));
+    if (clip?.status !== "success" || !clip.video_path) return c.text("No such clip.", 404);
+    return sendFile(c, path.join(media.root, clip.video_path), "video/mp4", VIDEO_CACHE);
   });
 
   app.notFound((c) => c.text("Not found.", 404));
