@@ -257,6 +257,24 @@ export async function listReplaysByIds(sql: Sql, ids: readonly string[]): Promis
   return ids.flatMap((id) => byId.get(id) ?? []);
 }
 
+/**
+ * Replays whose map, difficulty, player or mods contain every word of `query`, newest plays
+ * first. A word like `hddt` also matches a replay with all of those mods, in any order. An empty
+ * query lists the newest.
+ */
+export async function searchReplays(sql: Sql, query: string, limit = 25): Promise<ReplayView[]> {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+  const haystack = sql`lower(concat_ws(' ', coalesce(b.artist, f.artist), coalesce(b.title, f.title), coalesce(b.version, f.version),
+    r.player_name, array_to_string(r.mod_acronyms, ' ')))`;
+  const conditions = words.map((word) => {
+    const mods = /^([a-z][a-z0-9])+$/.test(word) ? word.toUpperCase().match(/../g)! : null;
+    return mods ? sql`(strpos(${haystack}, ${word}) > 0 or r.mod_acronyms @> ${mods}::text[])` : sql`strpos(${haystack}, ${word}) > 0`;
+  });
+  const where = conditions.reduce((all, condition) => sql`${all} and ${condition}`, sql`true`);
+  const rows = await sql`${sql.unsafe(SELECT)} where ${where} order by r.played_at desc, r.id limit ${limit}`;
+  return rows.map(toReplayView);
+}
+
 /** Newest uploads first. */
 export async function listReplays(sql: Sql, limit = 50): Promise<ReplayView[]> {
   const rows = await sql`${sql.unsafe(SELECT)} order by r.uploaded_at desc, r.id limit ${limit}`;

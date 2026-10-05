@@ -1,18 +1,19 @@
-// Discord notifications when a render finishes or fails. A DM needs a bot that shares a server
-// with you (webhooks can't DM); a webhook into a private channel needs no bot. Videos are never
-// uploaded to Discord: the message's media gallery points at the public video URL, and Discord
-// streams it from there.
+// Discord notifications when a render or clip finishes or fails. A DM needs a bot that shares a
+// server with you (webhooks can't DM); a webhook into a private channel needs no bot. Videos are
+// never uploaded to Discord: the message's media gallery points at the public video URL, and
+// Discord streams it from there.
 
+import { formatTimestamp, type Clip } from "../clips/store.ts";
+import { API, DiscordError, discordRequest } from "../discord/rest.ts";
 import { errorMessage } from "../errors.ts";
 import type { ReplayView } from "../replays/store.ts";
 import { modLabel } from "../scores/mods.ts";
 
-const API = "https://discord.com/api/v10";
-const USER_AGENT = "DiscordBot (https://github.com/dblopez04/kiai, 0.1)";
-
 export interface Notifier {
   rendered(replay: ReplayView): Promise<void>;
   failed(replay: ReplayView, error: string): Promise<void>;
+  /** A finished or failed clip: edits the /clip reply while its token lasts, else sends a new message. */
+  clip(replay: ReplayView, clip: Clip): Promise<void>;
 }
 
 export interface DiscordOptions {
@@ -37,6 +38,8 @@ export const publicReplayUrl = (publicUrl: string, id: string) => `${publicUrl}/
 /** Versioned by render, so a re-render isn't served from a cache. */
 export const publicVideoUrl = (publicUrl: string, r: ReplayView) => `${publicReplayUrl(publicUrl, r.id)}/video.mp4?v=${r.render?.id ?? 0}`;
 
+export const publicClipUrl = (publicUrl: string, id: string) => `${publicUrl}/c/${id}/video.mp4`;
+
 /** The pp shown for a play: osu!'s when the play is in the score library, else rosu-pp's estimate. */
 export function displayPp(r: ReplayView): { pp: number; estimate: boolean } | null {
   if (r.score_pp !== null) return { pp: r.score_pp, estimate: false };
@@ -57,6 +60,14 @@ export function playSummary(r: ReplayView): string {
   return parts.join(" · ");
 }
 
+/** `5.12★ · AR 9 · OD 8 · CS 4 · 180 BPM`, once the render worker has worked the map out. */
+export function mapStats(r: ReplayView): string | null {
+  const a = r.attributes;
+  return a ? `${a.stars.toFixed(2)}★ · AR ${a.ar} · OD ${a.od} · CS ${a.cs} · ${Math.round(a.bpm)} BPM` : null;
+}
+
+export const clipRange = (clip: Pick<Clip, "start_ms" | "end_ms">) => `${formatTimestamp(clip.start_ms)}–${formatTimestamp(clip.end_ms)}`;
+
 /** Discord markdown in names and titles shouldn't format the message. */
 export const escapeMarkdown = (text: string) => text.replace(/[\\*_~`|>]/g, "\\$&");
 
@@ -64,32 +75,36 @@ export const escapeMarkdown = (text: string) => text.replace(/[\\*_~`|>]/g, "\\$
 const escapeLinkText = (text: string) => escapeMarkdown(text).replace(/[[\]]/g, "\\$&");
 
 // Components V2: https://discord.com/developers/docs/components/reference
-const IS_COMPONENTS_V2 = 1 << 15;
+export const IS_COMPONENTS_V2 = 1 << 15;
 const CONTAINER = 17;
 const TEXT_DISPLAY = 10;
 const MEDIA_GALLERY = 12;
 const ACCENT_COLOR = 0xff66aa;
+/** Interaction tokens last 15 minutes; after that a clip goes out as a new DM or webhook message. */
+const INTERACTION_TOKEN_MS = 14 * 60_000;
 
 /**
- * The message for a finished render: a container with three short lines (map, play, and the
- * map's stats in small text) over the video, so the video takes most of the space. A bare link
- * would unfurl into an embed that repeats the title and summary above the video.
+ * A play's card: the map (linked to its public page), the play, then `notes` in small text, all
+ * over the video, so the video takes most of the space. A bare link would unfurl into an embed
+ * that repeats the title and summary above the video.
  */
-export function renderedMessage(r: ReplayView, publicUrl: string | undefined) {
-  const a = r.attributes;
+export function replayCard(r: ReplayView, publicUrl: string | undefined, notes: readonly string[], videoUrl: string | null) {
   const title = publicUrl ? `[${escapeLinkText(replayTitle(r))}](${publicReplayUrl(publicUrl, r.id)})` : escapeMarkdown(replayTitle(r));
   const lines = [
     `**${title}**`,
     escapeMarkdown(`${playSummary(r)} · ${r.player_name || "?"}${r.devserver ? ` on ${r.devserver}` : ""}`),
-    ...(a ? [`-# ${a.stars.toFixed(2)}★ · AR ${a.ar} · OD ${a.od} · CS ${a.cs} · ${Math.round(a.bpm)} BPM`] : []),
-    ...(publicUrl ? [] : ["-# Rendered. Set PUBLIC_URL on the server to get the video here."]),
+    ...notes.map((note) => `-# ${note}`),
   ];
-  const video = publicUrl ? [{ type: MEDIA_GALLERY, items: [{ media: { url: publicVideoUrl(publicUrl, r) } }] }] : [];
-  return {
-    flags: IS_COMPONENTS_V2,
-    components: [{ type: CONTAINER, accent_color: ACCENT_COLOR, components: [{ type: TEXT_DISPLAY, content: lines.join("\n") }, ...video] }],
-    allowed_mentions: { parse: [] },
-  };
+  const video = videoUrl ? [{ type: MEDIA_GALLERY, items: [{ media: { url: videoUrl } }] }] : [];
+  return [{ type: CONTAINER, accent_color: ACCENT_COLOR, components: [{ type: TEXT_DISPLAY, content: lines.join("\n") }, ...video] }];
+}
+
+const cardMessage = (components: ReturnType<typeof replayCard>) => ({ flags: IS_COMPONENTS_V2, components, allowed_mentions: { parse: [] } });
+
+/** The message for a finished render: the play's card over its video. */
+export function renderedMessage(r: ReplayView, publicUrl: string | undefined) {
+  const notes = [mapStats(r), publicUrl ? null : "Rendered. Set PUBLIC_URL on the server to get the video here."].filter((note) => note !== null);
+  return cardMessage(replayCard(r, publicUrl, notes, publicUrl ? publicVideoUrl(publicUrl, r) : null));
 }
 
 export function failedMessage(r: ReplayView, error: string) {
@@ -99,50 +114,61 @@ export function failedMessage(r: ReplayView, error: string) {
   };
 }
 
+/** The reply to /clip while the clip is cut (after rendering the replay, if it had no render). */
+export function clipPendingMessage(r: ReplayView, clip: Clip, publicUrl: string | undefined, rendering: boolean) {
+  const doing = rendering ? "rendering the replay first, then clipping" : "clipping";
+  return cardMessage(replayCard(r, publicUrl, [`✂️ ${clipRange(clip)} · ${doing}…`], null));
+}
+
+/** A finished clip, the card over the clip; or why there's no clip. */
+export function clipMessage(r: ReplayView, clip: Clip, publicUrl: string | undefined) {
+  if (clip.status !== "success" || !publicUrl) {
+    const error = clip.status === "success" ? "set PUBLIC_URL on the server to watch clips." : (clip.error_text ?? "it failed.");
+    return cardMessage(replayCard(r, publicUrl, [`✂️ ${clipRange(clip)} · no clip: ${escapeMarkdown(error.slice(0, 500))}`], null));
+  }
+  const stats = mapStats(r);
+  return cardMessage(replayCard(r, publicUrl, [`✂️ ${clipRange(clip)}${stats ? ` · ${stats}` : ""}`], publicClipUrl(publicUrl, clip.id)));
+}
+
 /** Null when neither a bot DM nor a webhook is configured. */
 export function discordNotifier(options: DiscordOptions): Notifier | null {
-  const doFetch = options.fetch ?? fetch;
   const useBot = Boolean(options.botToken && options.userId);
   if (!useBot && !options.webhookUrl) return null;
+  const request = (url: string, body: unknown, bot: boolean, method: "POST" | "PATCH" = "POST") =>
+    discordRequest(url, { method, body, botToken: bot ? options.botToken : undefined, ...(options.fetch ? { fetch: options.fetch } : {}) });
   let dmChannel: string | null = null;
-
-  async function post(url: string, body: unknown, bot: boolean): Promise<Response> {
-    for (let attempt = 0; ; attempt++) {
-      const response = await doFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "User-Agent": USER_AGENT, ...(bot ? { Authorization: `Bot ${options.botToken}` } : {}) },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (response.status === 429 && attempt < 2) {
-        const retry = Number(((await response.json().catch(() => ({}))) as { retry_after?: number }).retry_after ?? 1);
-        await new Promise((resolve) => setTimeout(resolve, Math.min(retry, 30) * 1000));
-        continue;
-      }
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(`Discord returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
-      }
-      return response;
-    }
-  }
 
   async function send(message: unknown): Promise<void> {
     if (useBot) {
       if (!dmChannel) {
-        const channel = (await (await post(`${API}/users/@me/channels`, { recipient_id: options.userId }, true)).json()) as { id: string };
+        const channel = (await (await request(`${API}/users/@me/channels`, { recipient_id: options.userId }, true)).json()) as { id: string };
         dmChannel = channel.id;
       }
-      await post(`${API}/channels/${dmChannel}/messages`, message, true);
+      await request(`${API}/channels/${dmChannel}/messages`, message, true);
     } else {
       // Webhooks drop components unless asked; display-only ones work on any webhook.
-      await post(`${options.webhookUrl}?wait=true&with_components=true`, message, false);
+      await request(`${options.webhookUrl}?wait=true&with_components=true`, message, false);
     }
   }
 
   return {
     rendered: (replay) => send(renderedMessage(replay, options.publicUrl)),
     failed: (replay, error) => send(failedMessage(replay, error)),
+    async clip(replay, clip) {
+      const message = clipMessage(replay, clip, options.publicUrl);
+      const d = clip.discord;
+      if (d && Date.now() - new Date(clip.created_at).getTime() < INTERACTION_TOKEN_MS) {
+        try {
+          // Turn the "clipping…" reply into the clip.
+          await request(`${API}/webhooks/${d.application_id}/${d.token}/messages/@original`, { components: message.components }, false, "PATCH");
+          return;
+        } catch (error) {
+          // The reply was deleted or its token expired: send the clip as a new message.
+          if (!(error instanceof DiscordError) || error.status !== 404) throw error;
+        }
+      }
+      await send(message);
+    },
   };
 }
 

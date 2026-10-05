@@ -110,7 +110,12 @@ Phases 3–5 implement all six steps, plus the score link. Modules:
 | `replays/attributes.ts` | Step 3: the map with the replay's mods applied (rosu-pp), stored in `replays.attributes` |
 | `render/rules.ts` | Rule expressions (`HD and ar < 10.3`): parser, matcher, and the facts a replay offers |
 | `render/presets.ts` | `render_presets`, `render_rules` (ordered, first match wins, `default` otherwise), skins in `data/skins` |
-| `render/notify.ts` | Step 6: Discord bot DM or webhook, once per job |
+| `render/notify.ts` | Step 6: Discord bot DM or webhook, once per job; clip replies |
+| `discord/rest.ts` | Discord REST requests with rate-limit retries, shared by the notifier and the bot |
+| `discord/gateway.ts` | Minimal gateway client (no intents): identify, heartbeat, resume, reconnect with backoff |
+| `discord/bot.ts` | `/clip`: registration on READY, replay autocomplete, queuing the clip; owner only |
+| `clips/store.ts` | `clip_jobs`: timestamps, queuing (and rendering first), claims, failing clips whose render failed |
+| `clips/worker.ts` | Cuts clips with ffmpeg (x264, frame-accurate) in the render worker's extra slot |
 | `http/render-settings.ts` | The editor at `/render`: presets, rules, skins, dry run |
 | `http/public.ts` | The public replay app: replay pages, videos, the gallery |
 | `replays/gallery.ts` | Phase 6: rendered replays as score-shaped rows (`s`, `b`), so `scoreConditions` filters them unchanged; best per map by beatmap id, or MD5 for unknown maps |
@@ -161,6 +166,23 @@ What the code relies on from danser 0.11's source:
    URL. The replay page keeps its `og:video` and `twitter:card=player` tags, so a link pasted by
    hand still plays inline. A webhook to a private channel is the no-setup alternative; it posts
    with `with_components=true`, or Discord drops the components.
+
+Clips (`/clip` in Discord):
+- The bot runs in the private web process (`serve` or `web`), so each install answers a command
+  once. It connects through the gateway rather than an interactions endpoint, so nothing private
+  is reachable from the internet. Only `DISCORD_USER_ID` may use it.
+- A command queues a `clip_jobs` row, plus a render if the replay's latest render isn't a
+  success, and replies at once with a Components V2 "clipping…" card. It stores the interaction
+  token so the worker can edit that reply later.
+- The render worker runs one extra slot for clips. It claims a queued clip once the replay's
+  latest render has succeeded and cuts from that video with ffmpeg (danser's bundled one in the
+  render image). Then it edits the reply into the clip, or sends a DM once the 15-minute token
+  has expired. A clip whose render failed, or whose worker died mid-cut, is failed with the
+  reason.
+- Timestamps are video time, which is what the viewer sees, not song time. They differ when a
+  preset skips the intro.
+- Clips are served at `/c/<id>/video.mp4` on the public app, with random 10-character ids like
+  replays.
 
 ## Deployment facts
 

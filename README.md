@@ -320,6 +320,31 @@ combo, pp, mods and player, and the map's stars/AR/OD/CS/BPM in small text, all 
 which Discord plays from the public URL. pp is osu!'s when the play is in the score library,
 otherwise rosu-pp's estimate (marked `*`).
 
+#### Clips: `/clip`
+
+With the bot set up (`DISCORD_BOT_TOKEN` and `DISCORD_USER_ID`) and `PUBLIC_URL` set, the bot has a
+`/clip` slash command that cuts part of a replay's video:
+
+- **query**: the replay. Type part of the map, difficulty, player or mods (`hddt` matches HD+DT in
+  any order), then pick one from the list. If you send without picking, it uses the newest play
+  that matches.
+- **start** and **end**: where the clip starts and ends in the rendered video, as you'd see it in
+  the player: `1:23`, `1:23.5`, `83` or `1:02:03`. Clips can be up to 5 minutes long. An end past
+  the video's end stops at the end.
+
+The bot replies "clipping…" and edits that reply into the clip (the same card as above, with the
+clip's range) when it's done. A replay with no render yet is rendered first. If that takes more
+than 15 minutes (Discord's limit for editing the reply), the clip comes as a DM instead.
+
+- Only `DISCORD_USER_ID` can use the command, since clips and renders run on your machine.
+  Anyone else gets a private "only the owner" reply.
+- The bot connects to Discord from the `server` container (`serve` or `web`), so it needs no
+  public endpoint. It registers `/clip` when it connects. To use it outside servers the bot is in,
+  install the app on your account (Developer Portal → Installation → User Install).
+- The render worker cuts clips with ffmpeg in a slot of its own, so a clip doesn't wait behind a
+  render. Clips are re-encoded with x264, so the cut lands on the exact frame. They're served at
+  `/c/<id>/video.mp4` on the public site.
+
 ### Commands
 
 ```sh

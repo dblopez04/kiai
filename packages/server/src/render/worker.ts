@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { runNextClip, type Clipper } from "../clips/worker.ts";
 import { sqlJson, type Sql } from "../db/index.ts";
 import { errorMessage } from "../errors.ts";
 import type { MediaPaths } from "../media.ts";
@@ -28,6 +29,8 @@ export interface RenderDeps {
   playerId: number | null;
   /** Discord, when configured. */
   notifier?: Notifier | null;
+  /** Cuts clips in a slot of its own. Without it, clips stay queued. */
+  clipper?: Clipper | null;
   fetch?: typeof fetch;
   log: (message: string) => void;
   heartbeatMs?: number;
@@ -196,20 +199,27 @@ function pause(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** Run render jobs until `signal` aborts. */
+/** Run render jobs, and clip jobs alongside them, until `signal` aborts. */
 export async function runRenderWorker(deps: RenderDeps, options: RenderWorkerOptions): Promise<void> {
-  const slot = async () => {
+  const clipper = deps.clipper;
+  const next = (kind: "render" | "clip") =>
+    kind === "render"
+      ? runNextRender(deps, options.signal)
+      : runNextClip({ sql: deps.sql, paths: deps.paths, clipper: clipper!, notifier: deps.notifier ?? null, log: deps.log }, options.signal);
+  const slot = async (kind: "render" | "clip") => {
     while (!options.signal?.aborted) {
       try {
-        const worked = await runNextRender(deps, options.signal);
+        const worked = await next(kind);
         if (options.once) return;
         if (!worked) await pause(options.idlePollMs ?? 3000, options.signal);
       } catch (error) {
-        deps.log(`render worker error: ${errorMessage(error)}`);
+        deps.log(`${kind} worker error: ${errorMessage(error)}`);
         if (options.once) throw error;
         await pause(15_000, options.signal);
       }
     }
   };
-  await Promise.all(Array.from({ length: options.concurrency }, slot));
+  const slots: Promise<void>[] = Array.from({ length: options.concurrency }, () => slot("render"));
+  if (clipper) slots.push(slot("clip"));
+  await Promise.all(slots);
 }
