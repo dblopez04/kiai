@@ -29,6 +29,10 @@ install -m755 dist/kiai-linux-x64 ~/.local/bin/kiai
 kiai server set http://homelab:8080 --token <UPLOAD_TOKEN>   # the server's UPLOAD_TOKEN
 ```
 
+To update later, `scripts/redeploy-client.sh` (`--pull` to `git pull` first) rebuilds the client
+for this machine, installs it over the `kiai` on your PATH (or `KIAI_BIN`), and restarts the
+watcher if it's running.
+
 ### Replay watcher
 
 The watcher uploads every replay you export to your kiai server, which renders it with danser:
@@ -103,6 +107,11 @@ fails closed. This also blocks DNS-rebinding attacks and writes from other websi
 To use it from other devices, publish the port on your LAN IP instead of 127.0.0.1, or reach
 it over Tailscale or an SSH tunnel. If you use a hostname other than an IP, a single-label
 name, or a `.local`/`.lan`/`.home.arpa`/`.internal`/`.ts.net` name, add it to `PRIVATE_HOSTS`.
+
+To update later, run `scripts/redeploy-server.sh` on the homelab. It pulls, rebuilds and restarts
+the stack, keeping whichever profiles (`nvidia`, `cpu`, `tunnel`) are running; pass profiles to
+choose them yourself. From another machine, `KIAI_DEPLOY_HOST=you@homelab scripts/redeploy-server.sh`
+runs it over ssh in `KIAI_DEPLOY_DIR` (default `~/kiai`).
 
 ### Score library
 
