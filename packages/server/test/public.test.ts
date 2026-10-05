@@ -177,7 +177,7 @@ describe("Discord", () => {
     expect(lines[0]).toBe(`**[kiai - Public Song \\[Hard\\]](https://replays.example.com/r/${id})**`);
     expect(lines[1]).toMatch(/^S · 96\.67% · 40x · \d+pp\\\* · DT 1\.5× · tester$/);
     expect(lines[2]).toMatch(/^-# \d+\.\d\d★ · AR 10\.33 · OD [\d.]+ · CS 4 · 180 BPM$/);
-    expect(message.video).toMatch(new RegExp(`^https://replays\\.example\\.com/r/${id}/video\\.mp4\\?v=\\d+$`));
+    expect(message.video).toMatch(new RegExp(`^https://replays\\.example\\.com/r/${id}/embed\\.mp4\\?v=\\d+$`));
 
     // Running the notification step again for the same job sends nothing.
     await db.sql`update render_jobs set status = 'queued'`;
@@ -206,7 +206,7 @@ describe("Discord", () => {
     const id = await renderedReplay(notifier);
     expect(sent).toHaveLength(1);
     expect(sent[0]!.body).not.toHaveProperty("attachments");
-    expect(renderedComponents(sent[0]!.body).video).toContain(`https://replays.example.com/r/${id}/video.mp4?v=`);
+    expect(renderedComponents(sent[0]!.body).video).toContain(`https://replays.example.com/r/${id}/embed.mp4?v=`);
   });
 });
 
@@ -218,11 +218,11 @@ describe("public replay app", () => {
     const page = await app().request(`/r/${id}`);
     expect(page.status).toBe(200);
     const body = await page.text();
-    expect(body).toContain(`<meta property="og:video" content="https://replays.example.com/r/${id}/video.mp4?v=`);
+    expect(body).toContain(`<meta property="og:video" content="https://replays.example.com/r/${id}/embed.mp4?v=`);
     expect(body).toContain('<meta property="og:title" content="kiai - Public Song [Hard]">');
     // "player", not "summary_large_image", or Discord shows a picture instead of the video.
     expect(body).toContain('<meta name="twitter:card" content="player">');
-    expect(body).toContain(`<meta name="twitter:player:stream" content="https://replays.example.com/r/${id}/video.mp4?v=`);
+    expect(body).toContain(`<meta name="twitter:player:stream" content="https://replays.example.com/r/${id}/embed.mp4?v=`);
     expect(page.headers.get("content-security-policy")).toContain("default-src 'none'");
     expect(await (await app().request("/")).text()).toContain(`/r/${id}`);
 
@@ -242,6 +242,13 @@ describe("public replay app", () => {
     const video = await app().request(`/r/${id}/video.mp4?v=1`, { headers: { range: "bytes=0-99" } });
     expect(video.status).toBe(206);
     expect(video.headers.get("content-range")).toBe("bytes 0-99/4096");
+
+    // Discord's copy is the full video until a smaller one is made.
+    expect((await app().request(`/r/${id}/embed.mp4`)).headers.get("content-length")).toBe("4096");
+    await fs.writeFile(path.join(media.videos, "small-embed.mp4"), Buffer.alloc(512, 3));
+    await db.sql`update render_jobs set embed_path = 'videos/small-embed.mp4' where replay_id = ${id}`;
+    expect((await app().request(`/r/${id}/embed.mp4`)).headers.get("content-length")).toBe("512");
+    expect((await app().request(`/r/${id}/video.mp4`)).headers.get("content-length")).toBe("4096");
   });
 
   it("makes up colours for replays rendered before palettes, and ignores bad ones", async () => {
@@ -260,6 +267,7 @@ describe("public replay app", () => {
     await enqueueRender(db.sql, id, "default");
     expect((await app().request(`/r/${id}`)).status).toBe(404);
     expect((await app().request(`/r/${id}/video.mp4`)).status).toBe(404);
+    expect((await app().request(`/r/${id}/embed.mp4`)).status).toBe(404);
     for (const privatePath of ["/api/scores", "/replays", `/replays/${id}`, "/api/replays", "/scores/1", "/sync"]) {
       expect((await app().request(privatePath)).status, privatePath).toBe(404);
     }

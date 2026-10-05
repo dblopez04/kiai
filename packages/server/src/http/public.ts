@@ -130,13 +130,16 @@ export function createPublicApp(deps: PublicAppDeps): Hono {
     return c.html(page.body, 200, { "Cache-Control": PAGE_CACHE, "Content-Security-Policy": csp(page.styleSrc) });
   });
 
-  app.on(["GET", "HEAD"], "/r/:id/video.mp4", async (c) => {
+  // video.mp4 is the full render; embed.mp4 is the copy small enough for Discord, or the full
+  // render when it's small enough already.
+  app.on(["GET", "HEAD"], "/r/:id/:file{video\\.mp4|embed\\.mp4}", async (c) => {
     const replay = await rendered(c.req.param("id"));
     if (!replay) return c.text("No such replay.", 404);
-    const [job] = await sql<{ video_path: string }[]>`
-      select video_path from render_jobs where replay_id = ${replay.id} and status = 'success' order by id desc limit 1`;
+    const [job] = await sql<{ video_path: string; embed_path: string | null }[]>`
+      select video_path, embed_path from render_jobs where replay_id = ${replay.id} and status = 'success' order by id desc limit 1`;
     if (!job) return c.text("No such replay.", 404);
-    return sendFile(c, path.join(media.root, job.video_path), "video/mp4", VIDEO_CACHE);
+    const file = c.req.param("file") === "embed.mp4" ? (job.embed_path ?? job.video_path) : job.video_path;
+    return sendFile(c, path.join(media.root, file), "video/mp4", VIDEO_CACHE);
   });
 
   app.on(["GET", "HEAD"], "/c/:id/video.mp4", async (c) => {

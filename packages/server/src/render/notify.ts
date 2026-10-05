@@ -35,8 +35,11 @@ export function replayTitle(r: ReplayView): string {
 
 export const publicReplayUrl = (publicUrl: string, id: string) => `${publicUrl}/r/${id}`;
 
-/** Versioned by render, so a re-render isn't served from a cache. */
-export const publicVideoUrl = (publicUrl: string, r: ReplayView) => `${publicReplayUrl(publicUrl, r.id)}/video.mp4?v=${r.render?.id ?? 0}`;
+/**
+ * The video for Discord and link previews: a copy small enough for Discord to play, when the
+ * render is too big. Versioned by render, so a re-render isn't served from a cache.
+ */
+export const publicEmbedUrl = (publicUrl: string, r: ReplayView) => `${publicReplayUrl(publicUrl, r.id)}/embed.mp4?v=${r.render?.id ?? 0}`;
 
 export const publicClipUrl = (publicUrl: string, id: string) => `${publicUrl}/c/${id}/video.mp4`;
 
@@ -104,7 +107,7 @@ const cardMessage = (components: ReturnType<typeof replayCard>) => ({ flags: IS_
 /** The message for a finished render: the play's card over its video. */
 export function renderedMessage(r: ReplayView, publicUrl: string | undefined) {
   const notes = [mapStats(r), publicUrl ? null : "Rendered. Set PUBLIC_URL on the server to get the video here."].filter((note) => note !== null);
-  return cardMessage(replayCard(r, publicUrl, notes, publicUrl ? publicVideoUrl(publicUrl, r) : null));
+  return cardMessage(replayCard(r, publicUrl, notes, publicUrl ? publicEmbedUrl(publicUrl, r) : null));
 }
 
 export function failedMessage(r: ReplayView, error: string) {

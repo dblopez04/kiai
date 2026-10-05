@@ -334,6 +334,12 @@ combo, pp, mods and player, and the map's stars/AR/OD/CS/BPM in small text, all 
 which Discord plays from the public URL. pp is osu!'s when the play is in the score library,
 otherwise rosu-pp's estimate (marked `*`).
 
+Discord won't play a linked video much over 80–100 MB, and a full-length 1080p60 render is
+several times that. So the render worker also makes a copy that fits in 75 MB (720p or 480p when
+the play is long), and the card and the page's link preview use it (`/r/<id>/embed.mp4`); the
+page itself plays the full render. Clips are held to the same size. For renders made before
+this, run `docker compose exec render node packages/server/src/main.ts embeds` once.
+
 #### Clips: `/clip`
 
 With the bot set up (`DISCORD_BOT_TOKEN` and `DISCORD_USER_ID`) and `PUBLIC_URL` set, the bot has a

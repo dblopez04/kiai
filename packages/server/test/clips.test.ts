@@ -322,6 +322,9 @@ describe.skipIf(!hasFfmpeg)("ffmpeg clipper", () => {
     const out = path.join(dir, "clip.mp4");
     expect(await clipper.cut({ source, output: out, startMs: 1000, endMs: 2000 }, signal)).toEqual({ endMs: 2000 });
     expect(await duration(out)).toBeCloseTo(1, 1);
+    // The audio is copied, not re-encoded: danser's ffmpeg can't decode it.
+    const audio = await run("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", out]);
+    expect(audio.stdout.trim()).toBe("aac");
 
     const tail = path.join(dir, "tail.mp4");
     expect((await clipper.cut({ source, output: tail, startMs: 2000, endMs: 60_000 }, signal)).endMs).toBeGreaterThanOrEqual(2900);
