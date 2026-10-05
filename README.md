@@ -283,6 +283,11 @@ that have a finished render: `/r/<id>` (video, map, mods, accuracy, pp), `/r/<id
 byte ranges), and the gallery at `/`. The pages carry `og:video` tags, so a link posted in
 Discord plays inline.
 
+A replay page is one plain, static, monospace page with no scripts. Its colours come from the map:
+when the render worker has the map, it reads the background through danser's ffmpeg and takes its
+most present vivid hue. A grey background falls back to the `.osu` file's combo colours, and a
+replay rendered before this gets a hue from its map's hash.
+
 The gallery searches rendered replays with the score library's filters (the same form and URL
 parameters as `/api/scores`), from every player whose replay you rendered:
 

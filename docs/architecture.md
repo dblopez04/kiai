@@ -113,6 +113,8 @@ Phases 3–5 implement all six steps, plus the score link. Modules:
 | `render/notify.ts` | Step 6: Discord bot DM or webhook, once per job |
 | `http/render-settings.ts` | The editor at `/render`: presets, rules, skins, dry run |
 | `http/public.ts` | The public replay app: replay pages, videos, the gallery |
+| `http/replay-page.ts` | The public replay page: static, no scripts, its colours in one `<style>` the CSP allows by hash |
+| `replays/palette.ts` | Page colours from the map (background hue via ffmpeg, else combo colours, else a hash), stored in `replays.palette` with the attributes |
 | `replays/gallery.ts` | Phase 6: rendered replays as score-shaped rows (`s`, `b`), so `scoreConditions` filters them unchanged; best per map by beatmap id, or MD5 for unknown maps |
 | `render/worker.ts` | Claim → map → link → render → record; `needs_map` parks a job until its .osz is uploaded |
 | `http/replays.ts` | Upload API (bearer `UPLOAD_TOKEN`), replay JSON, video with byte ranges, private replay pages |

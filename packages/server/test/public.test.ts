@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import { discordNotifier, renderedMessage } from "../src/render/notify.ts";
 import { enqueueRender } from "../src/render/queue.ts";
 import { runNextRender } from "../src/render/worker.ts";
 import { replayAttributes } from "../src/replays/attributes.ts";
+import { contrast, mapColours, mapPalette, type ImageDecoder } from "../src/replays/palette.ts";
 import { listGallery } from "../src/replays/gallery.ts";
 import { getReplay, saveReplay } from "../src/replays/store.ts";
 import { parseScoreFilters } from "../src/scores/query.ts";
@@ -40,8 +42,10 @@ afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-// A real, calculable map (40 circles at 120 BPM, AR9) with its metadata.
-const MAP = osuFile().replace("[Difficulty]", "[Metadata]\nTitle:Public Song\nArtist:kiai\nCreator:mapper\nVersion:Hard\nBeatmapID:0\nBeatmapSetID:-1\n\n[Difficulty]");
+// A real, calculable map (40 circles at 120 BPM, AR9) with its metadata, background and combo colours.
+const MAP = osuFile()
+  .replace("[Difficulty]", "[Metadata]\nTitle:Public Song\nArtist:kiai\nCreator:mapper\nVersion:Hard\nBeatmapID:0\nBeatmapSetID:-1\n\n[Difficulty]")
+  .replace("[TimingPoints]", '[Events]\n//Background and Video events\n0,0,"bg.jpg",0,0\n\n[Colours]\nCombo1 : 200,200,200\nCombo2 : 40,90,230\n\n[TimingPoints]');
 const MAP_MD5 = md5Of(MAP);
 
 const fakeRenderer: Renderer = {
@@ -65,17 +69,17 @@ function discordFetch(sent: Sent[]): typeof fetch {
 }
 
 /** Upload a replay of MAP (DT, 38/2/0/0), install the map, and render it. */
-async function renderedReplay(notifier: ReturnType<typeof discordNotifier> = null): Promise<string> {
+async function renderedReplay(notifier: ReturnType<typeof discordNotifier> = null, decodeImage: ImageDecoder | null = null): Promise<string> {
   await installOsz(db.sql, media, await writeZip(), "upload-test", "upload");
   const { id } = await saveReplay(db.sql, media, buildOsr({ beatmapMd5: MAP_MD5, modBits: 64, counts: [38, 2, 0, 0, 0, 0], maxCombo: 40 }), null);
   await enqueueRender(db.sql, id, "default");
-  await runNextRender({ sql: db.sql, osu: fakeOsu(), paths: media, renderer: fakeRenderer, mirrors: [], playerId: USER_ID, notifier, log: () => {} });
+  await runNextRender({ sql: db.sql, osu: fakeOsu(), paths: media, renderer: fakeRenderer, mirrors: [], playerId: USER_ID, notifier, decodeImage, log: () => {} });
   return id;
 }
 
 async function writeZip(): Promise<string> {
   const file = path.join(dir, "set.osz");
-  await fs.writeFile(file, buildZip({ "map.osu": MAP, "audio.mp3": "x" }));
+  await fs.writeFile(file, buildZip({ "map.osu": MAP, "audio.mp3": "x", "bg.jpg": "not really a jpeg" }));
   return file;
 }
 
@@ -95,6 +99,58 @@ describe("replay attributes", () => {
   it("are stored when the replay renders", async () => {
     const id = await renderedReplay();
     expect((await getReplay(db.sql, id))?.attributes).toMatchObject({ ar: 10.33, bpm: 180 });
+  });
+});
+
+/** `n` pixels of one colour, as an image decoder hands them over. */
+const solid = (rgb: [number, number, number], n = 48 * 27) => new Uint8Array(Array.from({ length: n }, () => rgb).flat());
+const rgbOf = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
+
+describe("map palette", () => {
+  it("reads the background and combo colours from the .osu", () => {
+    expect(mapColours(MAP)).toEqual({ background: "bg.jpg", combo: [[200, 200, 200], [40, 90, 230]] });
+    expect(mapColours('[Events]\n0,0,bg with spaces.png,0,0\n1,0,"video.mp4"')).toEqual({ background: "bg with spaces.png", combo: [] });
+    expect(mapColours(osuFile())).toEqual({ background: null, combo: [] });
+  });
+
+  it("takes the background's hue, then the most vivid combo colour, then a hash", () => {
+    // Mostly grey with a patch of green: the green wins, the grey counts for nothing.
+    const pixels = new Uint8Array([...solid([128, 128, 128], 900), ...solid([30, 200, 60], 300)]);
+    const fromImage = mapPalette({ pixels, combo: [[40, 90, 230]], seed: "x" });
+    expect(fromImage.source).toBe("background");
+    const [r, g, b] = rgbOf(fromImage.accent);
+    expect(g).toBeGreaterThan(r);
+    expect(g).toBeGreaterThan(b);
+
+    // A black-and-white background falls through to the combo colours: the blue one.
+    const fromCombo = mapPalette({ pixels: solid([250, 250, 250]), combo: [[200, 200, 200], [40, 90, 230]], seed: "x" });
+    expect(fromCombo.source).toBe("combo");
+    expect(rgbOf(fromCombo.accent)[2]).toBeGreaterThan(rgbOf(fromCombo.accent)[0]);
+
+    const hashed = mapPalette({ seed: "abc" });
+    expect(hashed).toEqual(mapPalette({ seed: "abc" }));
+    expect(hashed.source).toBe("hash");
+
+    // Text and links always read on the page, whatever the hue.
+    for (const p of [fromImage, fromCombo, hashed, mapPalette({ pixels: solid([255, 255, 0]), seed: "y" })]) {
+      for (const c of [p.ink, p.muted, p.accent, p.visited]) expect(contrast(rgbOf(c), rgbOf(p.paper))).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("is stored when the replay renders, from the background when it can be read", async () => {
+    const decoded: string[] = [];
+    const id = await renderedReplay(null, async (file) => {
+      decoded.push(path.basename(file));
+      return solid([220, 40, 40]);
+    });
+    expect(decoded).toEqual(["bg.jpg"]);
+    expect((await getReplay(db.sql, id))?.palette).toMatchObject({ source: "background" });
+    expect(rgbOf((await getReplay(db.sql, id))!.palette!.accent)[0]).toBeGreaterThan(100); // red, from the "image"
+  });
+
+  it("falls back to the combo colours without a decoder", async () => {
+    const id = await renderedReplay();
+    expect((await getReplay(db.sql, id))?.palette?.source).toBe("combo");
   });
 });
 
@@ -157,9 +213,33 @@ describe("public replay app", () => {
     expect(page.headers.get("content-security-policy")).toContain("default-src 'none'");
     expect(await (await app().request("/")).text()).toContain(`/r/${id}`);
 
+    // A plain page: no scripts, its colours in one style block that the CSP allows by hash.
+    expect(body).not.toContain("<script");
+    const style = /<style>([\s\S]*?)<\/style>/.exec(body)![1]!;
+    const hash = createHash("sha256").update(style).digest("base64");
+    expect(page.headers.get("content-security-policy")).toContain(`style-src 'self' 'sha256-${hash}'`);
+    const palette = (await getReplay(db.sql, id))!.palette!;
+    expect(style).toContain(`--accent:${palette.accent}`);
+    expect(body).toContain(`<meta name="theme-color" content="${palette.accent}">`);
+    expect(body).toContain("kiai - Public Song <span>[Hard]</span>");
+    expect(body).toMatch(/<dt>mods<\/dt><dd>DT[^<]*<\/dd>/);
+    expect(body).toContain("<dt>pp</dt>");
+    expect(body).toContain("hosted with hate and malice from Dallas, Texas");
+
     const video = await app().request(`/r/${id}/video.mp4?v=1`, { headers: { range: "bytes=0-99" } });
     expect(video.status).toBe(206);
     expect(video.headers.get("content-range")).toBe("bytes 0-99/4096");
+  });
+
+  it("makes up colours for replays rendered before palettes, and ignores bad ones", async () => {
+    const id = await renderedReplay();
+    await db.sql`update replays set palette = null where id = ${id}`;
+    const plain = await (await app().request(`/r/${id}`)).text();
+    expect(plain).toContain(`--accent:${mapPalette({ seed: MAP_MD5 }).accent}`);
+    await db.sql`update replays set palette = ${db.sql.json({ ...mapPalette({ seed: "x" }), accent: "red;}body{display:none" })} where id = ${id}`;
+    const tampered = await (await app().request(`/r/${id}`)).text();
+    expect(tampered).not.toContain("display:none");
+    expect(tampered).toContain(`--accent:${mapPalette({ seed: MAP_MD5 }).accent}`);
   });
 
   it("knows nothing about unrendered replays or anything private", async () => {

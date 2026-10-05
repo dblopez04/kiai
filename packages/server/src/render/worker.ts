@@ -9,6 +9,7 @@ import { errorMessage } from "../errors.ts";
 import type { MediaPaths } from "../media.ts";
 import type { OsuClient } from "../osu/api.ts";
 import { replayAttributes } from "../replays/attributes.ts";
+import { paletteForMap, type ImageDecoder } from "../replays/palette.ts";
 import { getReplay, linkReplays, replayFile, type ReplayView } from "../replays/store.ts";
 import { normalizeMods } from "../scores/mods.ts";
 import type { Renderer } from "./danser.ts";
@@ -28,6 +29,8 @@ export interface RenderDeps {
   playerId: number | null;
   /** Discord, when configured. */
   notifier?: Notifier | null;
+  /** Reads map backgrounds for the public page's colours; without it they come from combo colours. */
+  decodeImage?: ImageDecoder | null;
   fetch?: typeof fetch;
   log: (message: string) => void;
   heartbeatMs?: number;
@@ -72,7 +75,7 @@ export async function runNextRender(deps: RenderDeps, signal?: AbortSignal): Pro
       return true;
     }
 
-    await updateReplayAttributes(sql, paths, job.replay_id);
+    await updateReplayAttributes(sql, paths, job.replay_id, deps.decodeImage);
 
     // Pick the preset now that the map's attributes are known, unless one was chosen by hand.
     const view = await getReplay(sql, job.replay_id);
@@ -145,19 +148,21 @@ export async function runNextRender(deps: RenderDeps, signal?: AbortSignal): Pro
 }
 
 /**
- * Work out and store a replay's attributes (its map with its mods applied). Needs the map on
- * disk; returns false when it isn't there.
+ * Work out and store a replay's attributes (its map with its mods applied) and its page colours.
+ * Needs the map on disk; returns false when it isn't there.
  */
-export async function updateReplayAttributes(sql: Sql, paths: MediaPaths, replayId: string): Promise<boolean> {
+export async function updateReplayAttributes(sql: Sql, paths: MediaPaths, replayId: string, decodeImage?: ImageDecoder | null): Promise<boolean> {
   const [replay] = await sql<
     { beatmap_md5: string; mods: unknown; count300: number; count100: number; count50: number; countmiss: number; max_combo: number }[]
   >`select beatmap_md5, mods, count300, count100, count50, countmiss, max_combo from replays where id = ${replayId}`;
   if (!replay) return false;
   const file = await findBeatmapFile(sql, paths, replay.beatmap_md5);
   if (!file) return false;
-  const osu = await fs.readFile(path.join(paths.songs, file.folder, file.file), "utf8");
+  const folder = path.join(paths.songs, file.folder);
+  const osu = await fs.readFile(path.join(folder, file.file), "utf8");
   const attributes = replayAttributes(osu, { ...replay, mods: normalizeMods(replay.mods) });
-  await sql`update replays set attributes = ${attributes ? sqlJson(sql, attributes) : null} where id = ${replayId}`;
+  const palette = await paletteForMap(osu, folder, replay.beatmap_md5, decodeImage);
+  await sql`update replays set attributes = ${attributes ? sqlJson(sql, attributes) : null}, palette = ${sqlJson(sql, palette)} where id = ${replayId}`;
   return true;
 }
 

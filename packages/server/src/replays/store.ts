@@ -9,6 +9,7 @@ import { UserError } from "../errors.ts";
 import type { MediaPaths } from "../media.ts";
 import { normalizeMods, type ScoreMod } from "../scores/mods.ts";
 import type { ReplayAttributes } from "./attributes.ts";
+import type { MapPalette } from "./palette.ts";
 import { parseReplay, replayAccuracy, replayRank } from "./osr.ts";
 
 // No 0/1/l/o, so ids read back unambiguously.
@@ -169,6 +170,8 @@ export interface ReplayView {
   score_pp: number | null;
   /** The map with this play's mods applied, once the render worker has the map. */
   attributes: ReplayAttributes | null;
+  /** The public page's colours, once the render worker has the map. */
+  palette: MapPalette | null;
   render: RenderView | null;
 }
 
@@ -215,6 +218,7 @@ function toReplayView(row: Row): ReplayView {
     score_id: row.score_id as number | null,
     score_pp: (row.score_pp as number | null) ?? null,
     attributes: (row.attributes as ReplayAttributes | null) ?? null,
+    palette: (row.palette as MapPalette | null) ?? null,
     render: job
       ? {
           id: job.id as number,
