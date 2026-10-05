@@ -108,6 +108,8 @@ type RenderUpdate = Partial<{
   error_text: string | null;
   video_path: string | null;
   video_bytes: number | null;
+  embed_path: string | null;
+  embed_bytes: number | null;
   finished_at: Date;
   lease_token: null;
 }>;

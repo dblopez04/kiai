@@ -14,6 +14,7 @@ import { paletteForMap, type ImageDecoder } from "../replays/palette.ts";
 import { getReplay, linkReplays, replayFile, type ReplayView } from "../replays/store.ts";
 import { normalizeMods } from "../scores/mods.ts";
 import type { Renderer } from "./danser.ts";
+import { EMBED_MAX_BYTES, type Embedder } from "./embed.ts";
 import { ensureBeatmap, findBeatmapFile } from "./maps.ts";
 import { notifySafely, type Notifier } from "./notify.ts";
 import { BUILTIN_SKIN, choosePreset, getPreset, listSkins, presetFrameSize } from "./presets.ts";
@@ -32,6 +33,8 @@ export interface RenderDeps {
   notifier?: Notifier | null;
   /** Cuts clips in a slot of its own. Without it, clips stay queued. */
   clipper?: Clipper | null;
+  /** Makes the smaller copy of a render too big for Discord. Without it, Discord gets the full video. */
+  embedder?: Embedder | null;
   /** Reads map backgrounds for the public page's colours; without it they come from combo colours. */
   decodeImage?: ImageDecoder | null;
   fetch?: typeof fetch;
@@ -119,11 +122,14 @@ export async function runNextRender(deps: RenderDeps, signal?: AbortSignal): Pro
     const video = path.join(paths.videos, `${outputName}.mp4`);
     if (path.resolve(produced) !== video) await fs.rename(produced, video);
     const { size } = await fs.stat(video);
+    const embed = size > EMBED_MAX_BYTES ? await makeEmbed(deps, video, stop.signal, log) : null;
     await lease.update({
       status: "success",
       progress: 100,
       video_path: path.relative(paths.root, video),
       video_bytes: size,
+      embed_path: embed && path.relative(paths.root, embed.path),
+      embed_bytes: embed?.bytes ?? null,
       error_text: null,
       finished_at: new Date(),
       lease_token: null,
@@ -148,6 +154,45 @@ export async function runNextRender(deps: RenderDeps, signal?: AbortSignal): Pro
     signal?.removeEventListener("abort", onShutdown);
   }
   return true;
+}
+
+/**
+ * The smaller copy of a render for Discord, next to it as `<name>-embed.mp4`. Null without an
+ * embedder or when it fails: Discord then gets the full video, which it may not play.
+ */
+async function makeEmbed(deps: Pick<RenderDeps, "paths" | "embedder">, video: string, signal: AbortSignal, log: (message: string) => void): Promise<{ path: string; bytes: number } | null> {
+  if (!deps.embedder) return null;
+  const output = video.replace(/\.mp4$/, "-embed.mp4");
+  const tmp = path.join(deps.paths.tmp, path.basename(output));
+  try {
+    const bytes = await deps.embedder.shrink({ source: video, output: tmp }, signal);
+    await fs.rename(tmp, output);
+    log(`made a ${(bytes / 1024 / 1024).toFixed(1)} MB copy for Discord`);
+    return { path: output, bytes };
+  } catch (error) {
+    await fs.rm(tmp, { force: true });
+    log(`couldn't make a copy for Discord, which gets the full video: ${errorMessage(error)}`);
+    return null;
+  }
+}
+
+/** Make the Discord copies that renders from before them lack. Returns how many were made. */
+export async function makeMissingEmbeds(deps: Pick<RenderDeps, "sql" | "paths" | "embedder" | "log">, signal: AbortSignal): Promise<number> {
+  const jobs = await deps.sql<{ id: number; replay_id: string; video_path: string }[]>`
+    select distinct on (replay_id) id, replay_id, video_path from render_jobs
+    where status = 'success' order by replay_id, id desc`;
+  let made = 0;
+  for (const job of jobs) {
+    signal.throwIfAborted();
+    const [missing] = await deps.sql`select 1 from render_jobs where id = ${job.id} and embed_path is null and video_bytes > ${EMBED_MAX_BYTES}`;
+    if (!missing) continue;
+    const log = (message: string) => deps.log(`[render ${job.id} replay ${job.replay_id}] ${message}`);
+    const embed = await makeEmbed(deps, path.join(deps.paths.root, job.video_path), signal, log);
+    if (!embed) continue;
+    await deps.sql`update render_jobs set embed_path = ${path.relative(deps.paths.root, embed.path)}, embed_bytes = ${embed.bytes} where id = ${job.id}`;
+    made++;
+  }
+  return made;
 }
 
 /**

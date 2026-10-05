@@ -7,6 +7,7 @@ import { createApp } from "../src/http/app.ts";
 import { ensureMediaDirs, mediaPaths, type MediaPaths } from "../src/media.ts";
 import { resolvePlayer, type Player } from "../src/player.ts";
 import { danserCommand, danserRenderer, type Renderer } from "../src/render/danser.ts";
+import { EMBED_MAX_BYTES, type Embedder } from "../src/render/embed.ts";
 import { ensureBeatmap, installOsz, parseOsuMetadata } from "../src/render/maps.ts";
 import { claimRender, enqueueRender, MAX_RENDER_ATTEMPTS } from "../src/render/queue.ts";
 import { runNextRender, type RenderDeps } from "../src/render/worker.ts";
@@ -205,7 +206,7 @@ describe("beatmaps", () => {
 });
 
 /** Writes a small "video" and reports progress, like danser would. */
-function fakeRenderer(behaviour: "ok" | "fail" = "ok"): Renderer & { inputs: string[] } {
+function fakeRenderer(behaviour: "ok" | "fail" | "big" = "ok"): Renderer & { inputs: string[] } {
   const inputs: string[] = [];
   return {
     inputs,
@@ -215,6 +216,8 @@ function fakeRenderer(behaviour: "ok" | "fail" = "ok"): Renderer & { inputs: str
       if (behaviour === "fail") throw new Error("danser exited with code 2.");
       const out = path.join(media.videos, `${input.outputName}.mp4`);
       await fs.writeFile(out, Buffer.alloc(2048, 7));
+      // Sparse: too big for Discord without taking the disk space.
+      if (behaviour === "big") await fs.truncate(out, EMBED_MAX_BYTES + 1);
       input.onProgress(100);
       return out;
     },
@@ -239,6 +242,39 @@ describe("render queue and worker", () => {
     expect(replay?.beatmap).toMatchObject({ id: MAP_ID, beatmapset_id: SET_ID });
     const [job] = await db.sql`select video_path from render_jobs`;
     expect(job?.video_path).toBe(`videos/${renderer.inputs[0]}.mp4`);
+  });
+
+  it("makes a copy Discord can play of a render too big for it, and goes on without one if that fails", async () => {
+    knowMap();
+    const shrunk: string[] = [];
+    const embedder: Embedder = {
+      async shrink(input) {
+        shrunk.push(input.source);
+        await fs.writeFile(input.output, Buffer.alloc(1024, 1));
+        return 1024;
+      },
+    };
+    const small = (await saveReplay(db.sql, media, buildOsr({ beatmapMd5: MAP_MD5 }), null)).id;
+    await enqueueRender(db.sql, small, null);
+    await runNextRender({ ...renderDeps(fakeRenderer()), embedder });
+    expect(shrunk).toEqual([]);
+
+    const big = (await saveReplay(db.sql, media, buildOsr({ beatmapMd5: MAP_MD5, totalScore: 2 }), null)).id;
+    await enqueueRender(db.sql, big, null);
+    const renderer = fakeRenderer("big");
+    await runNextRender({ ...renderDeps(renderer), embedder });
+    const [job] = await db.sql`select video_path, embed_path, embed_bytes from render_jobs where replay_id = ${big}`;
+    expect(shrunk).toEqual([path.join(media.videos, `${renderer.inputs[0]}.mp4`)]);
+    expect(job).toMatchObject({ video_path: `videos/${renderer.inputs[0]}.mp4`, embed_path: `videos/${renderer.inputs[0]}-embed.mp4`, embed_bytes: 1024 });
+    expect((await fs.stat(path.join(media.root, job!.embed_path as string))).size).toBe(1024);
+
+    const failing: Embedder = { shrink: async () => Promise.reject(new Error("ffmpeg failed: no NVENC")) };
+    const again = (await saveReplay(db.sql, media, buildOsr({ beatmapMd5: MAP_MD5, totalScore: 3 }), null)).id;
+    await enqueueRender(db.sql, again, null);
+    await runNextRender({ ...renderDeps(fakeRenderer("big")), embedder: failing });
+    expect((await getReplay(db.sql, again))?.render?.status).toBe("success");
+    expect((await db.sql`select embed_path from render_jobs where replay_id = ${again}`)[0]?.embed_path).toBeNull();
+    expect(await fs.readdir(media.tmp)).toEqual([]);
   });
 
   it("queues each replay once until its render finishes", async () => {

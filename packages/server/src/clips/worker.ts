@@ -10,6 +10,7 @@ import type { Sql } from "../db/index.ts";
 import { errorMessage, UserError } from "../errors.ts";
 import type { MediaPaths } from "../media.ts";
 import { notifySafely, type Notifier } from "../render/notify.ts";
+import { embedBudget, ffmpegEnv, probeVideo, rateCapArgs, type FfmpegOptions } from "../render/embed.ts";
 import { getReplay } from "../replays/store.ts";
 import { claimClip, failClip, failStuckClips, finishClip, formatTimestamp, releaseClip, type Clip } from "./store.ts";
 
@@ -28,33 +29,17 @@ export interface Clipper {
   cut(input: CutInput, signal: AbortSignal): Promise<{ endMs: number }>;
 }
 
-export interface FfmpegOptions {
-  ffmpeg: string;
-  ffprobe: string;
-  /** Extra library directories, for danser's bundled ffmpeg. */
-  libraryPath?: string;
-  timeoutMs?: number;
-}
-
 /**
  * Re-encodes the stretch with x264, so the cut lands on the exact frame rather than the nearest
  * keyframe. Clips are short, so this takes seconds on the CPU, next to a render on the GPU.
  * The audio is copied: danser's bundled ffmpeg has no audio decoders, and its renders are AAC
- * already, whose packets are short enough (~21 ms) to cut on.
+ * already, whose packets are short enough (~21 ms) to cut on. A long clip is held to the bitrate
+ * that keeps it playable in Discord.
  */
 export function ffmpegClipper(options: FfmpegOptions): Clipper {
-  const env = options.libraryPath
-    ? { ...process.env, LD_LIBRARY_PATH: [options.libraryPath, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") }
-    : process.env;
   return {
     async cut(input, signal) {
-      const probe = await run(
-        options.ffprobe,
-        ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", input.source],
-        { env, signal, timeout: 60_000 },
-      );
-      const durationMs = Math.floor(Number(probe.stdout.trim()) * 1000);
-      if (!Number.isFinite(durationMs) || durationMs <= 0) throw new Error(`ffprobe couldn't read the video's length: ${probe.stdout.trim()}`);
+      const { durationMs, audioBps } = await probeVideo(options, input.source, signal);
       if (input.startMs >= durationMs) {
         throw new UserError(`The video is only ${formatTimestamp(durationMs)} long, so ${formatTimestamp(input.startMs)} is past its end.`);
       }
@@ -67,12 +52,12 @@ export function ffmpegClipper(options: FfmpegOptions): Clipper {
           "-i", input.source,
           "-t", ((endMs - input.startMs) / 1000).toFixed(3),
           "-map", "0:v:0", "-map", "0:a:0?",
-          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", ...rateCapArgs(embedBudget(endMs - input.startMs, audioBps)), "-pix_fmt", "yuv420p",
           "-c:a", "copy",
           "-movflags", "+faststart",
           input.output,
         ],
-        { env, signal, timeout: options.timeoutMs ?? 15 * 60_000, maxBuffer: 1024 * 1024 },
+        { env: ffmpegEnv(options), signal, timeout: options.timeoutMs ?? 15 * 60_000, maxBuffer: 1024 * 1024 },
       ).catch((error: Error & { stderr?: string }) => {
         throw new Error(`ffmpeg failed: ${(error.stderr || error.message).trim().split("\n").slice(-5).join("\n")}`);
       });

@@ -22,8 +22,9 @@ import { OsuApi, type OsuClient } from "./osu/api.ts";
 import { RateLimiter } from "./osu/rate-limit.ts";
 import { resolvePlayer, type Player } from "./player.ts";
 import { danserRenderer } from "./render/danser.ts";
+import { ffmpegEmbedder, type FfmpegOptions } from "./render/embed.ts";
 import { discordNotifier } from "./render/notify.ts";
-import { runRenderWorker } from "./render/worker.ts";
+import { makeMissingEmbeds, runRenderWorker } from "./render/worker.ts";
 import { ffmpegDecoder } from "./replays/palette.ts";
 import { scoreCsv } from "./scores/csv.ts";
 import { createPpCalculator, type PpCalculator } from "./scores/pp.ts";
@@ -39,6 +40,8 @@ Usage:
   server worker [--once]        Sync worker only (--once: at most one job, then exit)
   server render-worker [--once] Render worker: runs danser on uploaded replays (the render container)
   server public                 Public replay pages on PUBLIC_PORT (the only port to expose)
+  server embeds                 Make the copies Discord can play of renders too big for it that
+                                lack one (run it in the render container)
   server migrate                Apply database migrations
   server sync [--mode recent|history|refresh|reset] [--confirm RESET]
                                 Queue a sync for OSU_USER (default: recent). The worker runs it.
@@ -210,12 +213,16 @@ async function startBot(rt: Runtime, signal: AbortSignal): Promise<void> {
 }
 
 /** danser's bundled ffmpeg in the render image; whatever is on PATH elsewhere. */
-function clipperFor(config: Config) {
+function ffmpegFor(config: Config): FfmpegOptions {
   const bundled = path.join(config.DANSER_DIR, "ffmpeg");
   return existsSync(path.join(bundled, "ffmpeg"))
-    ? ffmpegClipper({ ffmpeg: path.join(bundled, "ffmpeg"), ffprobe: path.join(bundled, "ffprobe"), libraryPath: bundled })
-    : ffmpegClipper({ ffmpeg: "ffmpeg", ffprobe: "ffprobe" });
+    ? { ffmpeg: path.join(bundled, "ffmpeg"), ffprobe: path.join(bundled, "ffprobe"), libraryPath: bundled }
+    : { ffmpeg: "ffmpeg", ffprobe: "ffprobe" };
 }
+
+/** Discord copies on NVENC when renders are made there, else x264. */
+const embedderFor = (config: Config) =>
+  ffmpegEmbedder({ ...ffmpegFor(config), encoder: config.RENDER_ENCODER.endsWith("_nvenc") ? "h264_nvenc" : "libx264" });
 
 async function dispatch(command: string, args: string[], rt: Runtime, io: Io): Promise<number> {
   switch (command) {
@@ -284,10 +291,20 @@ async function dispatch(command: string, args: string[], rt: Runtime, io: Io): P
       });
       rt.log(notifier ? `Discord notifications on (${config.DISCORD_BOT_TOKEN && config.DISCORD_USER_ID ? "DM" : "webhook"})` : "Discord notifications off");
       await runRenderWorker(
-        { sql: rt.sql, osu: rt.osuOrNull(), paths: media, renderer, clipper: clipperFor(config), mirrors: config.MAP_MIRRORS, playerId: player.id, notifier, decodeImage, log: rt.log },
+        { sql: rt.sql, osu: rt.osuOrNull(), paths: media, renderer, clipper: ffmpegClipper(ffmpegFor(config)), embedder: embedderFor(config), mirrors: config.MAP_MIRRORS, playerId: player.id, notifier, decodeImage, log: rt.log },
         { concurrency: config.RENDER_CONCURRENCY, once: values.once ?? false, signal: controller.signal },
       );
       rt.log("stopped");
+      return 0;
+    }
+
+    case "embeds": {
+      parse(args, {});
+      const media = mediaPaths(rt.config.DATA_DIR);
+      await ensureMediaDirs(media);
+      const controller = stopSignal();
+      const made = await makeMissingEmbeds({ sql: rt.sql, paths: media, embedder: embedderFor(rt.config), log: rt.log }, controller.signal);
+      io.out(`made ${made} cop${made === 1 ? "y" : "ies"} for Discord`);
       return 0;
     }
 
