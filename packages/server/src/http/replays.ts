@@ -14,12 +14,14 @@ import type { Player } from "../player.ts";
 import { installOsz, MAX_OSZ_BYTES, writeStreamLimited } from "../render/maps.ts";
 import { getPreset, listPresets } from "../render/presets.ts";
 import { enqueueRender, requeueWaitingFor } from "../render/queue.ts";
+import { deleteRenderVideos, deleteReplays, listReplayPage, pruneSupersededRenders, RENDER_FILTERS, replayStorage, type RenderFilter } from "../replays/manage.ts";
 import { getReplay, linkReplays, listReplays, normalizeDevserver, saveReplay } from "../replays/store.ts";
 import { sendFile } from "./files.ts";
 import { registerRenderSettingsRoutes } from "./render-settings.ts";
 import { replayPage, replaysPage } from "./views.ts";
 
 const MAX_OSR_BYTES = 32 * 1024 * 1024;
+const PAGE_SIZE = 50;
 const PRIVATE = { "Cache-Control": "private, no-store" };
 
 export interface ReplayRouteDeps {
@@ -168,9 +170,76 @@ export function registerReplayRoutes(app: Hono, deps: ReplayRouteDeps): void {
     }),
   );
 
+  app.delete("/api/replays/:id", (c) =>
+    guard(c, async () => {
+      const replay = await replayOr404(c);
+      await deleteReplays(sql, media, [replay.id]);
+      return c.json({ deleted: replay.id }, 200, PRIVATE);
+    }),
+  );
+
   // ---------- pages ----------
 
-  app.get("/replays", async (c) => c.html(replaysPage(await listReplays(sql), player, c.req.query("notice")), 200, PRIVATE));
+  app.get("/replays", async (c) => {
+    const render = RENDER_FILTERS.includes(c.req.query("render") as RenderFilter) ? (c.req.query("render") as RenderFilter) : "all";
+    const options = { query: (c.req.query("q") ?? "").trim(), render, page: Math.max(1, Math.floor(Number(c.req.query("page"))) || 1), pageSize: PAGE_SIZE };
+    const [list, storage, presets] = await Promise.all([listReplayPage(sql, options), replayStorage(sql), listPresets(sql)]);
+    return c.html(replaysPage({ list, storage, presets, query: options.query, render }, player, c.req.query("notice")), 200, PRIVATE);
+  });
+
+  /** Back to the list the form was sent from (`back` is its query string), with a notice. */
+  const backToList = (back: unknown, notice: string) => {
+    const params = new URLSearchParams(typeof back === "string" && back.startsWith("?") ? back : "");
+    params.set("notice", notice);
+    return `/replays?${params}`;
+  };
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+  /** The panel's bulk actions on the checked replays: `render` (with `preset`), `delete_videos`, `delete`. */
+  app.post("/replays/manage", async (c) => {
+    const form = await c.req.parseBody({ all: true });
+    const ids = [form.id ?? []].flat().filter((id): id is string => typeof id === "string");
+    if (ids.length === 0) return c.redirect(backToList(form.back, "Select some replays first."), 303);
+    let notice: string;
+    switch (form.action) {
+      case "render": {
+        const preset = await presetChoice(form.preset);
+        let queued = 0;
+        let waiting = 0;
+        for (const id of ids) {
+          if (!(await getReplay(sql, id))) continue;
+          if ((await enqueueRender(sql, id, preset)).alreadyQueued) waiting++;
+          else queued++;
+        }
+        notice = `Queued ${plural(queued, "render")}.${waiting ? ` ${plural(waiting, "replay was", "replays were")} already queued.` : ""}`;
+        break;
+      }
+      case "delete_videos":
+        notice = `Deleted ${plural(await deleteRenderVideos(sql, media, ids), "video")}. The replays are kept and can be rendered again.`;
+        break;
+      case "delete":
+        notice = `Deleted ${plural(await deleteReplays(sql, media, ids), "replay")}.`;
+        break;
+      default:
+        throw new UserError("Pick what to do with the selected replays.");
+    }
+    return c.redirect(backToList(form.back, notice), 303);
+  });
+
+  /** Delete the videos newer renders replaced. */
+  app.post("/replays/cleanup", async (c) => {
+    const form = await c.req.parseBody();
+    const freed = await pruneSupersededRenders(sql, media);
+    return c.redirect(backToList(form.back, `Deleted ${plural(freed.videos, "older video")}, freeing ${(freed.bytes / 1024 / 1024).toFixed(1)} MB.`), 303);
+  });
+
+  app.post("/replays/:id/delete", (c) =>
+    guard(c, async () => {
+      const replay = await replayOr404(c);
+      await deleteReplays(sql, media, [replay.id]);
+      return c.redirect(backToList("", "Replay deleted."), 303);
+    }),
+  );
 
   app.get("/replays/:id", (c) => guard(c, async () => c.html(replayPage(await replayOr404(c), player, deps.publicUrl, await listPresets(sql)), 200, PRIVATE)));
 

@@ -12,7 +12,8 @@ import { ensureBeatmap, installOsz, parseOsuMetadata } from "../src/render/maps.
 import { claimRender, enqueueRender, MAX_RENDER_ATTEMPTS } from "../src/render/queue.ts";
 import { runNextRender, type RenderDeps } from "../src/render/worker.ts";
 import { legacyMods, parseReplay, replayRank } from "../src/replays/osr.ts";
-import { getReplay, linkReplays, normalizeDevserver, saveReplay } from "../src/replays/store.ts";
+import { deleteRenderVideos, deleteReplays, listReplayPage, pruneSupersededRenders, replayStorage } from "../src/replays/manage.ts";
+import { getReplay, linkReplays, normalizeDevserver, replayFile, saveReplay } from "../src/replays/store.ts";
 import { runImport } from "../src/scores/importer.ts";
 import { createTestDb, type TestDb } from "./helpers/db.ts";
 import { beatmap, fakeOsu, score, USER_ID, type FakeOsu } from "./helpers/fake-osu.ts";
@@ -316,6 +317,107 @@ describe("render queue and worker", () => {
   });
 });
 
+/** A replay of the known map, rendered `renders` times. */
+async function renderedReplay(name: string, renders = 1): Promise<string> {
+  knowMap();
+  const { id } = await saveReplay(db.sql, media, buildOsr({ beatmapMd5: MAP_MD5, playerName: name, data: Buffer.from(name) }), null);
+  for (let i = 0; i < renders; i++) {
+    await enqueueRender(db.sql, id, "default");
+    await runNextRender(renderDeps(fakeRenderer()));
+  }
+  return id;
+}
+
+const exists = (file: string) => fs.access(file).then(() => true, () => false);
+const videoFiles = async () => (await fs.readdir(media.videos)).sort();
+
+async function addClip(replayId: string, clipId: string): Promise<string> {
+  const file = path.join(media.videos, `clip-${clipId}.mp4`);
+  await fs.writeFile(file, Buffer.alloc(512));
+  await db.sql`insert into clip_jobs (id, replay_id, start_ms, end_ms, status, video_path, video_bytes)
+    values (${clipId}, ${replayId}, 0, 1000, 'success', ${`videos/clip-${clipId}.mp4`}, 512)`;
+  return file;
+}
+
+describe("managing replays", () => {
+  it("deletes replays with their file, renders, clips and videos, and nothing else", async () => {
+    const gone = await renderedReplay("gone", 2);
+    const kept = await renderedReplay("kept");
+    await addClip(gone, "clipgone01");
+    const keptClip = await addClip(kept, "clipkept01");
+    expect(await videoFiles()).toHaveLength(5);
+
+    expect(await deleteReplays(db.sql, media, [gone, "notanid", "nosuchone1"])).toBe(1);
+    expect(await getReplay(db.sql, gone)).toBeNull();
+    expect(await exists(replayFile(media, gone))).toBe(false);
+    expect(await db.sql`select id from render_jobs where replay_id = ${gone}`).toHaveLength(0);
+    expect(await videoFiles()).toEqual([`${kept}-${(await getReplay(db.sql, kept))!.render!.id}.mp4`, "clip-clipkept01.mp4"].sort());
+    expect(await exists(replayFile(media, kept))).toBe(true);
+    expect(await exists(keptClip)).toBe(true);
+  });
+
+  it("deletes only the videos, keeping the replay and its clips", async () => {
+    const id = await renderedReplay("player", 2);
+    const clip = await addClip(id, "clipclip01");
+    await enqueueRender(db.sql, id, "default");
+
+    expect(await deleteRenderVideos(db.sql, media, [id])).toBe(2);
+    expect(await videoFiles()).toEqual(["clip-clipclip01.mp4"]);
+    expect(await exists(clip)).toBe(true);
+    // The queued render is left to run.
+    expect((await getReplay(db.sql, id))?.render?.status).toBe("queued");
+  });
+
+  it("prunes only renders that a newer successful render replaced", async () => {
+    const twice = await renderedReplay("twice", 3);
+    const once = await renderedReplay("once");
+    // A newer failed render doesn't replace the video the public page still serves.
+    await enqueueRender(db.sql, once, "default");
+    await runNextRender(renderDeps(fakeRenderer("fail")));
+
+    expect(await replayStorage(db.sql)).toMatchObject({ replays: 2, render_bytes: 4 * 2048, superseded_videos: 2, superseded_bytes: 2 * 2048 });
+    expect(await pruneSupersededRenders(db.sql, media)).toEqual({ videos: 2, bytes: 2 * 2048 });
+    const latest = (await getReplay(db.sql, twice))!.render!;
+    expect(await videoFiles()).toEqual([`${twice}-${latest.id}.mp4`, expect.stringMatching(new RegExp(`^${once}-`))].sort());
+    expect(await db.sql`select id from render_jobs where replay_id = ${once} and status = 'success'`).toHaveLength(1);
+    expect((await replayStorage(db.sql)).superseded_videos).toBe(0);
+  });
+
+  it("drops the video of a render whose replay was deleted while it rendered", async () => {
+    knowMap();
+    const { id } = await saveReplay(db.sql, media, buildOsr({ beatmapMd5: MAP_MD5 }), null);
+    await enqueueRender(db.sql, id, "default");
+    const renderer = fakeRenderer();
+    const deletingRenderer: Renderer = {
+      async render(input, signal) {
+        await deleteReplays(db.sql, media, [id]);
+        return renderer.render(input, signal);
+      },
+    };
+    await runNextRender(renderDeps(deletingRenderer));
+    expect(await videoFiles()).toEqual([]);
+  });
+
+  it("lists replays a page at a time, by search and render state", async () => {
+    const rendered = await renderedReplay("alice");
+    const { id: waiting } = await saveReplay(db.sql, media, buildOsr({ playerName: "bob", data: Buffer.from("bob") }), null);
+    await enqueueRender(db.sql, waiting, null);
+    const { id: bare } = await saveReplay(db.sql, media, buildOsr({ playerName: "carol", data: Buffer.from("carol"), modBits: 8 | 64 }), null);
+
+    const ids = async (o: Partial<Parameters<typeof listReplayPage>[1]>) =>
+      (await listReplayPage(db.sql, { query: "", render: "all", page: 1, pageSize: 50, ...o })).replays.map((r) => r.id);
+    expect(await ids({})).toEqual([bare, waiting, rendered]);
+    expect(await ids({ render: "rendered" })).toEqual([rendered]);
+    expect(await ids({ render: "pending" })).toEqual([waiting]);
+    expect(await ids({ render: "none" })).toEqual([bare]);
+    expect(await ids({ query: "dthd" })).toEqual([bare]);
+    expect(await ids({ query: "song alice" })).toEqual([rendered]);
+    const second = await listReplayPage(db.sql, { query: "", render: "all", page: 2, pageSize: 2 });
+    expect(second.replays.map((r) => r.id)).toEqual([rendered]);
+    expect(second.pagination).toEqual({ page: 2, page_size: 2, total_count: 3, total_pages: 2 });
+  });
+});
+
 describe("danser", () => {
   // Stands in for danser-cli: records its arguments, prints progress, writes <out>.mp4 unless told not to.
   async function fakeDanser(mode: "ok" | "missing-map", glRenderer = "NVIDIA GeForce GTX 1050 Ti/PCIe/SSE2"): Promise<string> {
@@ -476,5 +578,46 @@ describe("HTTP", () => {
     expect((await rerender("https://evil.example")).status).toBe(403);
     expect((await rerender(ORIGIN)).status).toBe(303);
     expect((await getReplay(db.sql, id))?.render?.status).toBe("queued");
+  });
+
+  it("manages replays from the panel, but not from another site", async () => {
+    const first = await renderedReplay("first", 2);
+    const second = await renderedReplay("second");
+    const panel = await (await request("/replays")).text();
+    expect(panel).toContain(`name="id" value="${first}"`);
+    expect(panel).toContain("1 older videos");
+    expect(await (await request("/replays?render=none")).text()).toContain("No replays match.");
+
+    const manage = (fields: [string, string][], origin = ORIGIN) =>
+      request("/replays/manage", { method: "POST", body: new URLSearchParams(fields), headers: { origin, "content-type": "application/x-www-form-urlencoded" } });
+    expect((await manage([["action", "delete"], ["id", first]], "https://evil.example")).status).toBe(403);
+
+    const rerendered = await manage([["action", "render"], ["preset", "default"], ["id", first], ["id", second], ["back", "?render=rendered&page=1"]]);
+    expect(rerendered.status).toBe(303);
+    const back = new URL(rerendered.headers.get("location")!, ORIGIN);
+    expect(back.pathname).toBe("/replays");
+    expect(Object.fromEntries(back.searchParams)).toEqual({ render: "rendered", page: "1", notice: "Queued 2 renders." });
+    expect((await getReplay(db.sql, second))?.render).toMatchObject({ status: "queued", preset: "default" });
+
+    const cleanup = await request("/replays/cleanup", { method: "POST", headers: { origin: ORIGIN } });
+    expect(new URL(cleanup.headers.get("location")!, ORIGIN).searchParams.get("notice")).toContain("Deleted 1 older video");
+
+    const deleted = await manage([["action", "delete"], ["id", first], ["id", second]]);
+    expect(new URL(deleted.headers.get("location")!, ORIGIN).searchParams.get("notice")).toBe("Deleted 2 replays.");
+    expect(await db.sql`select id from replays`).toHaveLength(0);
+    expect(await videoFiles()).toEqual([]);
+  });
+
+  it("deletes a replay from its page and through the API", async () => {
+    const one = await renderedReplay("one");
+    const two = await renderedReplay("two");
+    expect(await (await request(`/replays/${one}`)).text()).toContain(`action="/replays/${one}/delete"`);
+    const fromPage = await request(`/replays/${one}/delete`, { method: "POST", headers: { origin: ORIGIN } });
+    expect(fromPage.status).toBe(303);
+    expect(await getReplay(db.sql, one)).toBeNull();
+
+    expect((await request(`/api/replays/${two}`, { method: "DELETE" })).status).toBe(200);
+    expect((await request(`/api/replays/${two}`, { method: "DELETE" })).status).toBe(404);
+    expect(await videoFiles()).toEqual([]);
   });
 });

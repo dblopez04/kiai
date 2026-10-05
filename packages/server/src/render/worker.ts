@@ -133,6 +133,10 @@ export async function runNextRender(deps: RenderDeps, signal?: AbortSignal): Pro
       error_text: null,
       finished_at: new Date(),
       lease_token: null,
+    }).catch(async (error: unknown) => {
+      // The job is gone (its replay was deleted) or taken over: nothing will serve this video.
+      if (lease.lost) await fs.rm(video, { force: true });
+      throw error;
     });
     log(`done: ${path.relative(paths.root, video)} (${(size / 1024 / 1024).toFixed(1)} MB)`);
     await notify(deps, job.id, job.replay_id, (n, view) => n.rendered(view), log);

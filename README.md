@@ -258,7 +258,12 @@ How a render goes:
   A render still running after `RENDER_TIMEOUT_MINUTES` is stopped.
 
 Rendered replays are listed at <http://localhost:8080/replays> (private, like the score library),
-where you can watch or download them and render again, with the rules or a preset you pick.
+where you can watch or download them and render again, with the rules or a preset you pick. The
+list is also the place to manage them: search by map, player or mods, filter by render state, tick
+replays to render them again, delete just their videos (to free space; the replay stays and can be
+rendered again) or delete them outright (the .osr, every render, its clips and their videos). It
+shows how much space videos take, and can delete older videos that a newer render of the same
+replay replaced. A single replay's page can delete it too.
 
 ### Presets, rules and skins
 
@@ -397,6 +402,7 @@ Same privacy rules as the pages: private hostnames only. Uploads also need `UPLO
 | `GET /api/replays`, `GET /api/replays/:id` | Replays with their latest render: `queued`, `running` (with `progress`), `needs_map`, `success` (with `video_url`) or `failed` (with `error`) |
 | `PUT /api/replays/:id/beatmapset` | Upload the .osz a replay was played on (raw body, bearer token). Refused if it lacks that exact difficulty |
 | `POST /api/replays/:id/render` | Render again: `{"preset": "hd"}`, or no body to let the rules pick |
+| `DELETE /api/replays/:id` | Delete a replay with its renders, clips and videos |
 | `GET /api/render/presets`, `GET /api/render/rules` | Presets (and skins), and rules in order |
 | `GET /api/render/dry-run?replay=<id>` | Which preset the rules pick for a replay, and why |
 | `PUT /api/skins/:name` | Upload an .osk (raw body, bearer token); replaces a skin of that name |

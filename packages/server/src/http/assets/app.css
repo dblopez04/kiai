@@ -94,6 +94,7 @@ label.check { display: inline-flex; gap: 0.3rem; align-items: center; white-spac
 details summary { cursor: pointer; }
 details.danger { margin-top: 0.8rem; }
 details.danger summary { color: var(--alert); }
+.toolbar { margin: 0.8rem 0; }
 .progress { border-left: 3px solid var(--accent); padding-left: 0.8rem; }
 .progress p { margin: 0.2rem 0; }
 
