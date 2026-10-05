@@ -9,7 +9,7 @@ import { Hono, type Context } from "hono";
 import { html } from "hono/html";
 import type { Sql } from "../db/index.ts";
 import type { MediaPaths } from "../media.ts";
-import { displayPp, playSummary, publicReplayUrl, replayTitle } from "../render/notify.ts";
+import { displayPp, playSummary, publicReplayUrl, publicVideoUrl, replayTitle } from "../render/notify.ts";
 import { listGallery, type GalleryPage } from "../replays/gallery.ts";
 import { getReplay, type ReplayView } from "../replays/store.ts";
 import { DEFAULT_FILTERS, filtersToParams, parseScoreFilters, type ScoreFilters } from "../scores/query.ts";
@@ -90,7 +90,7 @@ function galleryPage(f: ScoreFilters, page: GalleryPage): Html {
 
 function replayPage(r: ReplayView, origin: string): Html {
   const url = publicReplayUrl(origin, r.id);
-  const video = `${url}/video.mp4?v=${r.render?.id ?? 0}`;
+  const video = publicVideoUrl(origin, r);
   const title = replayTitle(r);
   const summary = `${playSummary(r)} · played by ${r.player_name}${r.devserver ? ` on ${r.devserver}` : ""}`;
   const a = r.attributes;

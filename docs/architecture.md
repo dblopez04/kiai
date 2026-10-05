@@ -154,9 +154,13 @@ What the code relies on from danser 0.11's source:
    danser's defaults, so the patch keeps only what differs) and everything else as JSON. New
    presets start as a copy of `default` (or of the preset whose Copy link was used).
 6. Notify. Discord DMs need a bot that shares a server with the user, since webhooks can't
-   send DMs. The message is plain text: Discord doesn't unfurl links in a message that carries
-   its own embed. Videos are never uploaded to Discord: the message links the replay page, whose
-   `og:video` and `twitter:card=player` tags make Discord play the video inline. A webhook to a private channel is the no-setup alternative.
+   send DMs. The message uses Components V2: one container with three short text lines (map
+   linked to its page, play, map stats as subtext) over a media gallery holding the public
+   `video.mp4` URL. A bare page link would unfurl into an embed that repeats the title and
+   summary above the video. Videos are never uploaded to Discord; it streams them from the public
+   URL. The replay page keeps its `og:video` and `twitter:card=player` tags, so a link pasted by
+   hand still plays inline. A webhook to a private channel is the no-setup alternative; it posts
+   with `with_components=true`, or Discord drops the components.
 
 ## Deployment facts
 

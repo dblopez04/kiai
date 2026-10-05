@@ -315,8 +315,9 @@ of these in `.env`:
   add it to any server you're in; bots can only DM people they share a server with.
 - **Webhook:** `DISCORD_WEBHOOK_URL`, for a channel (e.g. a private one on your own server).
 
-The message is the public link (which Discord turns into a playable video) plus an embed with the
-map, grade, accuracy, combo, pp and mods. pp is osu!'s when the play is in the score library,
+The message is a compact card: the map (linked to its public page), a line with grade, accuracy,
+combo, pp, mods and player, and the map's stars/AR/OD/CS/BPM in small text, all above the video,
+which Discord plays from the public URL. pp is osu!'s when the play is in the score library,
 otherwise rosu-pp's estimate (marked `*`).
 
 ### Commands

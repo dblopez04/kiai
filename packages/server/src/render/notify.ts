@@ -1,7 +1,7 @@
 // Discord notifications when a render finishes or fails. A DM needs a bot that shares a server
 // with you (webhooks can't DM); a webhook into a private channel needs no bot. Videos are never
-// uploaded to Discord: the message links the public replay page, whose video tags make Discord
-// play it inline.
+// uploaded to Discord: the message's media gallery points at the public video URL, and Discord
+// streams it from there.
 
 import { errorMessage } from "../errors.ts";
 import type { ReplayView } from "../replays/store.ts";
@@ -34,6 +34,9 @@ export function replayTitle(r: ReplayView): string {
 
 export const publicReplayUrl = (publicUrl: string, id: string) => `${publicUrl}/r/${id}`;
 
+/** Versioned by render, so a re-render isn't served from a cache. */
+export const publicVideoUrl = (publicUrl: string, r: ReplayView) => `${publicReplayUrl(publicUrl, r.id)}/video.mp4?v=${r.render?.id ?? 0}`;
+
 /** The pp shown for a play: osu!'s when the play is in the score library, else rosu-pp's estimate. */
 export function displayPp(r: ReplayView): { pp: number; estimate: boolean } | null {
   if (r.score_pp !== null) return { pp: r.score_pp, estimate: false };
@@ -57,21 +60,36 @@ export function playSummary(r: ReplayView): string {
 /** Discord markdown in names and titles shouldn't format the message. */
 export const escapeMarkdown = (text: string) => text.replace(/[\\*_~`|>]/g, "\\$&");
 
+/** Link text also needs its brackets escaped, which diff names nearly always have. */
+const escapeLinkText = (text: string) => escapeMarkdown(text).replace(/[[\]]/g, "\\$&");
+
+// Components V2: https://discord.com/developers/docs/components/reference
+const IS_COMPONENTS_V2 = 1 << 15;
+const CONTAINER = 17;
+const TEXT_DISPLAY = 10;
+const MEDIA_GALLERY = 12;
+const ACCENT_COLOR = 0xff66aa;
+
 /**
- * The message for a finished render: text only, with no embed of its own, because Discord
- * doesn't unfurl links in a message that already has one. The link's page then shows as the
- * playable video.
+ * The message for a finished render: a container with three short lines (map, play, and the
+ * map's stats in small text) over the video, so the video takes most of the space. A bare link
+ * would unfurl into an embed that repeats the title and summary above the video.
  */
 export function renderedMessage(r: ReplayView, publicUrl: string | undefined) {
-  const link = publicUrl ? publicReplayUrl(publicUrl, r.id) : undefined;
   const a = r.attributes;
+  const title = publicUrl ? `[${escapeLinkText(replayTitle(r))}](${publicReplayUrl(publicUrl, r.id)})` : escapeMarkdown(replayTitle(r));
   const lines = [
-    `**${escapeMarkdown(replayTitle(r))}**`,
+    `**${title}**`,
     escapeMarkdown(`${playSummary(r)} · ${r.player_name || "?"}${r.devserver ? ` on ${r.devserver}` : ""}`),
-    ...(a ? [`${a.stars.toFixed(2)}★ · AR ${a.ar} · OD ${a.od} · CS ${a.cs} · ${Math.round(a.bpm)} BPM`] : []),
-    link ?? "Rendered. Set PUBLIC_URL on the server to get a link here.",
+    ...(a ? [`-# ${a.stars.toFixed(2)}★ · AR ${a.ar} · OD ${a.od} · CS ${a.cs} · ${Math.round(a.bpm)} BPM`] : []),
+    ...(publicUrl ? [] : ["-# Rendered. Set PUBLIC_URL on the server to get the video here."]),
   ];
-  return { content: lines.join("\n"), allowed_mentions: { parse: [] } };
+  const video = publicUrl ? [{ type: MEDIA_GALLERY, items: [{ media: { url: publicVideoUrl(publicUrl, r) } }] }] : [];
+  return {
+    flags: IS_COMPONENTS_V2,
+    components: [{ type: CONTAINER, accent_color: ACCENT_COLOR, components: [{ type: TEXT_DISPLAY, content: lines.join("\n") }, ...video] }],
+    allowed_mentions: { parse: [] },
+  };
 }
 
 export function failedMessage(r: ReplayView, error: string) {
@@ -117,7 +135,8 @@ export function discordNotifier(options: DiscordOptions): Notifier | null {
       }
       await post(`${API}/channels/${dmChannel}/messages`, message, true);
     } else {
-      await post(`${options.webhookUrl}?wait=true`, message, false);
+      // Webhooks drop components unless asked; display-only ones work on any webhook.
+      await post(`${options.webhookUrl}?wait=true&with_components=true`, message, false);
     }
   }
 
