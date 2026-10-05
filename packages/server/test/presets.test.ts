@@ -11,7 +11,7 @@ import { installOsz } from "../src/render/maps.ts";
 import {
   addRule, choosePreset, deletePreset, deleteSkin, getPreset, installSkin, listRules, listSkins, moveRule, parsePatch, savePreset, updateRule,
 } from "../src/render/presets.ts";
-import { fieldValue, mergePatch, SETTING_GROUPS, settingsFromForm, withoutFormKeys } from "../src/render/settings-form.ts";
+import { fieldValue, mergePatch, SETTING_GROUPS, settingsFromForm, TOGGLE_GROUPS, withoutFormKeys } from "../src/render/settings-form.ts";
 import { enqueueRender } from "../src/render/queue.ts";
 import { matchesRule, parseRule, ruleFacts, type RuleFacts } from "../src/render/rules.ts";
 import { runNextRender } from "../src/render/worker.ts";
@@ -156,7 +156,7 @@ describe("presets and rules", () => {
 /** What a browser submits for the settings form showing `patch`: unchecked boxes are left out. */
 function formOf(patch: Record<string, unknown>): Record<string, string> {
   const fields: Record<string, string> = {};
-  for (const field of SETTING_GROUPS.flatMap((group) => group.fields)) {
+  for (const field of [...SETTING_GROUPS, ...TOGGLE_GROUPS].flatMap((group) => group.fields)) {
     const value = fieldValue(field, patch);
     if (value === true) fields[field.key] = "1";
     else if (value !== false) fields[field.key] = String(value);
